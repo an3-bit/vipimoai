@@ -1,7 +1,10 @@
-import { Cpu, ArrowLeft, ArrowRight, Lightbulb, CheckCircle, AlertTriangle } from 'lucide-react';
+import { useState } from 'react';
+import { Cpu, ArrowLeft, ArrowRight, CheckCircle, AlertTriangle, Move, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SurveyMap } from '@/components/map/SurveyMap';
+import { InteractiveMapEditor } from '@/components/map/InteractiveMapEditor';
 import { SuggestionsPanel } from '@/components/subdivision/SuggestionsPanel';
 import { Coordinate, Plot, Beacon, AISuggestion } from '@/types/survey';
 import { formatArea } from '@/lib/geometry';
@@ -13,6 +16,7 @@ interface AIStepProps {
   suggestions: AISuggestion[];
   onBack: () => void;
   onNext: () => void;
+  onPlotsUpdate: (plots: Plot[]) => void;
 }
 
 export function AIStep({
@@ -22,7 +26,9 @@ export function AIStep({
   suggestions,
   onBack,
   onNext,
+  onPlotsUpdate,
 }: AIStepProps) {
+  const [viewMode, setViewMode] = useState<'preview' | 'edit'>('preview');
   const hasResults = plots.length > 0;
 
   return (
@@ -36,7 +42,7 @@ export function AIStep({
               Step 4: AI Results
             </CardTitle>
             <CardDescription>
-              Review the AI-generated subdivision layout
+              Review and adjust the AI-generated subdivision layout
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -52,10 +58,29 @@ export function AIStep({
                   </p>
                 </div>
 
+                {/* Edit Mode Toggle */}
+                <div className="rounded-lg bg-survey-primary/10 border border-survey-primary/30 p-3">
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Switch to Edit mode to drag plot corners and fine-tune boundaries
+                  </p>
+                  <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'preview' | 'edit')}>
+                    <TabsList className="w-full">
+                      <TabsTrigger value="preview" className="flex-1">
+                        <Eye className="h-3 w-3 mr-1" />
+                        Preview
+                      </TabsTrigger>
+                      <TabsTrigger value="edit" className="flex-1">
+                        <Move className="h-3 w-3 mr-1" />
+                        Edit
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+
                 {/* Plot Summary */}
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium">Plot Summary</h4>
-                  <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1">
+                  <div className="max-h-[180px] overflow-y-auto space-y-2 pr-1">
                     {plots.map((plot) => (
                       <div
                         key={plot.id}
@@ -115,21 +140,39 @@ export function AIStep({
       <div className="lg:col-span-2">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">
-              Final Layout
+            <CardTitle className="text-sm font-medium flex items-center justify-between">
+              <span>{viewMode === 'edit' ? 'Interactive Editor' : 'Final Layout'}</span>
+              {viewMode === 'edit' && (
+                <span className="text-xs font-normal text-survey-primary flex items-center gap-1">
+                  <Move className="h-3 w-3" />
+                  Drag corners to adjust
+                </span>
+              )}
             </CardTitle>
             <CardDescription>
-              Review plots and beacons before exporting
+              {viewMode === 'edit'
+                ? 'Drag the corner markers to fine-tune plot boundaries'
+                : 'Review plots and beacons before exporting'}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <SurveyMap
-              parcelCoordinates={parcelCoordinates}
-              plots={plots}
-              beacons={beacons}
-              className="h-[500px]"
-              showSatellite
-            />
+            {viewMode === 'edit' ? (
+              <InteractiveMapEditor
+                parcelCoordinates={parcelCoordinates}
+                plots={plots}
+                onPlotsUpdate={onPlotsUpdate}
+                className="h-[500px]"
+                showSatellite
+              />
+            ) : (
+              <SurveyMap
+                parcelCoordinates={parcelCoordinates}
+                plots={plots}
+                beacons={beacons}
+                className="h-[500px]"
+                showSatellite
+              />
+            )}
           </CardContent>
         </Card>
       </div>
