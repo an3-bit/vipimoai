@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Layers, Settings, Download, Map, Satellite } from 'lucide-react';
+import { ArrowLeft, Layers, Download, Map, Satellite } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SurveyMap, ParcelUpload } from '@/components/map';
+import { SubdivisionForm, SuggestionsPanel } from '@/components/subdivision';
 import { useProject, useCreateParcel } from '@/hooks/useSurvey';
-import { Coordinate, Beacon, Plot } from '@/types/survey';
+import { Coordinate, Beacon, Plot, AISuggestion } from '@/types/survey';
 import { calculateArea, calculatePerimeter, formatArea } from '@/lib/geometry';
 import { supabase } from '@/integrations/supabase/client';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,7 +20,10 @@ export default function Project() {
 
   const [showSatellite, setShowSatellite] = useState(false);
   const [parcelCoordinates, setParcelCoordinates] = useState<Coordinate[]>([]);
-  const [hoveredCoord, setHoveredCoord] = useState<Coordinate | null>(null);
+  const [plots, setPlots] = useState<Plot[]>([]);
+  const [beacons, setBeacons] = useState<Beacon[]>([]);
+  const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
+  const [activeTab, setActiveTab] = useState('upload');
 
   // Check auth
   useEffect(() => {
@@ -35,12 +39,14 @@ export default function Project() {
       const coords = parcel.coordinates as unknown as Coordinate[];
       if (Array.isArray(coords)) {
         setParcelCoordinates(coords);
+        setActiveTab('subdivide');
       }
     }
   }, [project]);
 
   const handleCoordinatesLoaded = async (coordinates: Coordinate[]) => {
     setParcelCoordinates(coordinates);
+    setActiveTab('subdivide');
 
     // Save parcel to database
     if (projectId) {
@@ -52,38 +58,12 @@ export default function Project() {
     }
   };
 
-  // Get beacons from project data
-  const beacons: Beacon[] = project?.parcels?.flatMap(parcel =>
-    parcel.subdivisions?.flatMap(sub =>
-      sub.plots?.flatMap(plot =>
-        (plot.beacons || []).map(b => ({
-          id: b.id,
-          beacon_number: b.beacon_number,
-          latitude: b.latitude,
-          longitude: b.longitude,
-          northing: b.northing,
-          easting: b.easting,
-          description: b.description,
-        }))
-      ) || []
-    ) || []
-  ) || [];
-
-  // Get plots from project data
-  const plots: Plot[] = project?.parcels?.flatMap(parcel =>
-    parcel.subdivisions?.flatMap(sub =>
-      (sub.plots || []).map(p => ({
-        id: p.id,
-        plot_number: p.plot_number,
-        coordinates: p.coordinates as Coordinate[],
-        area_sqm: p.area_sqm,
-        width_m: p.width_m,
-        depth_m: p.depth_m,
-        is_partial: p.is_partial || false,
-        beacons: [],
-      }))
-    ) || []
-  ) || [];
+  const handleSubdivisionComplete = (newPlots: Plot[], newBeacons: Beacon[], newSuggestions: AISuggestion[]) => {
+    setPlots(newPlots);
+    setBeacons(newBeacons);
+    setSuggestions(newSuggestions);
+    setActiveTab('beacons');
+  };
 
   if (isLoading) {
     return (
@@ -125,7 +105,7 @@ export default function Project() {
                 {showSatellite ? <Map className="h-4 w-4 mr-2" /> : <Satellite className="h-4 w-4 mr-2" />}
                 {showSatellite ? 'Map View' : 'Satellite'}
               </Button>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" disabled={plots.length === 0}>
                 <Download className="h-4 w-4 mr-2" />
                 Export
               </Button>
@@ -143,7 +123,6 @@ export default function Project() {
               parcelCoordinates={parcelCoordinates}
               plots={plots}
               beacons={beacons}
-              onCoordinateHover={setHoveredCoord}
               showSatellite={showSatellite}
               className="h-[500px]"
             />
@@ -152,7 +131,7 @@ export default function Project() {
             {parcelCoordinates.length > 0 && (
               <Card variant="glass">
                 <CardContent className="py-4">
-                  <div className="grid grid-cols-3 gap-4 text-center">
+                  <div className="grid grid-cols-4 gap-4 text-center">
                     <div>
                       <p className="text-2xl font-bold text-survey-primary">
                         {formatArea(calculateArea(parcelCoordinates))}
@@ -161,13 +140,19 @@ export default function Project() {
                     </div>
                     <div>
                       <p className="text-2xl font-bold text-survey-accent">
-                        {calculatePerimeter(parcelCoordinates).toFixed(2)} m
+                        {calculatePerimeter(parcelCoordinates).toFixed(0)} m
                       </p>
                       <p className="text-xs text-muted-foreground">Perimeter</p>
                     </div>
                     <div>
+                      <p className="text-2xl font-bold text-survey-success">
+                        {plots.length}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Plots</p>
+                    </div>
+                    <div>
                       <p className="text-2xl font-bold text-survey-beacon">
-                        {parcelCoordinates.length}
+                        {beacons.length}
                       </p>
                       <p className="text-xs text-muted-foreground">Beacons</p>
                     </div>
@@ -175,11 +160,16 @@ export default function Project() {
                 </CardContent>
               </Card>
             )}
+
+            {/* AI Suggestions */}
+            {suggestions.length > 0 && (
+              <SuggestionsPanel suggestions={suggestions} />
+            )}
           </div>
 
           {/* Sidebar */}
           <div className="space-y-4">
-            <Tabs defaultValue="upload" className="w-full">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="upload">Upload</TabsTrigger>
                 <TabsTrigger value="subdivide">Subdivide</TabsTrigger>
@@ -191,25 +181,20 @@ export default function Project() {
               </TabsContent>
 
               <TabsContent value="subdivide" className="mt-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Settings className="h-5 w-5 text-survey-primary" />
-                      Subdivision Setup
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {parcelCoordinates.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-8">
+                {parcelCoordinates.length === 0 ? (
+                  <Card>
+                    <CardContent className="py-8 text-center">
+                      <p className="text-sm text-muted-foreground">
                         Upload a parcel first to configure subdivision
                       </p>
-                    ) : (
-                      <p className="text-sm text-muted-foreground text-center py-8">
-                        Subdivision form coming soon...
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <SubdivisionForm
+                    parcelCoordinates={parcelCoordinates}
+                    onSubdivisionComplete={handleSubdivisionComplete}
+                  />
+                )}
               </TabsContent>
 
               <TabsContent value="beacons" className="mt-4">
@@ -217,7 +202,7 @@ export default function Project() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Layers className="h-5 w-5 text-survey-beacon" />
-                      Beacon List
+                      Beacon List ({beacons.length})
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -226,15 +211,24 @@ export default function Project() {
                         No beacons yet. Subdivide the parcel to generate beacons.
                       </p>
                     ) : (
-                      <div className="space-y-2 max-h-80 overflow-y-auto">
+                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
                         {beacons.map((beacon) => (
                           <div
                             key={beacon.id}
-                            className="p-3 rounded-md bg-muted/50 font-mono text-xs"
+                            className="p-3 rounded-md bg-muted/50 font-mono text-xs border border-border/50 hover:border-survey-beacon/50 transition-colors"
                           >
-                            <p className="font-semibold">Beacon {beacon.beacon_number}</p>
-                            <p>Lat: {beacon.latitude.toFixed(6)}</p>
-                            <p>Lng: {beacon.longitude.toFixed(6)}</p>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-semibold text-survey-beacon">
+                                B{beacon.beacon_number}
+                              </span>
+                              <span className="text-muted-foreground text-[10px]">
+                                {beacon.description}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-muted-foreground">
+                              <span>Lat: {beacon.latitude.toFixed(6)}</span>
+                              <span>Lng: {beacon.longitude.toFixed(6)}</span>
+                            </div>
                           </div>
                         ))}
                       </div>

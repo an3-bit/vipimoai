@@ -1,1 +1,4 @@
 project_id = "bulbbgjzturskshnpmsn"
+
+[functions.ai-subdivide]
+verify_jwt = true
