@@ -199,6 +199,7 @@ export default function Project() {
             suggestions={suggestions}
             onBack={() => setCurrentStep(3)}
             onNext={() => setCurrentStep(5)}
+            onPlotsUpdate={setPlots}
           />
         )}
 
