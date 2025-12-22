@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { useProjects, useCreateProject } from '@/hooks/useSurvey';
+import { useProjects, useCreateProject, useCreateParcel } from '@/hooks/useSurvey';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,8 @@ import {
   Plus, MapPin, FolderOpen, LogOut, Clock, CheckCircle, FileText, 
   Grid3X3, Download, Map, Settings, Home, Layers
 } from 'lucide-react';
+import { ParcelUpload } from '@/components/map/ParcelUpload';
+import { Coordinate } from '@/types/survey';
 import {
   Sidebar,
   SidebarContent,
@@ -31,9 +33,11 @@ export default function Dashboard() {
   const [projectName, setProjectName] = useState('');
   const [clientName, setClientName] = useState('');
   const [activeSection, setActiveSection] = useState('projects');
+  const [parcelCoordinates, setParcelCoordinates] = useState<Coordinate[] | null>(null);
 
   const { data: projects, isLoading } = useProjects();
   const createProject = useCreateProject();
+  const createParcel = useCreateParcel();
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -48,15 +52,33 @@ export default function Dashboard() {
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!projectName.trim()) return;
+    if (!parcelCoordinates || parcelCoordinates.length < 3) {
+      return;
+    }
 
-    await createProject.mutateAsync({
+    const project = await createProject.mutateAsync({
       name: projectName,
       client_name: clientName || undefined,
+    });
+
+    // Create the parcel with coordinates
+    await createParcel.mutateAsync({
+      projectId: project.id,
+      name: 'Main Parcel',
+      coordinates: parcelCoordinates,
     });
 
     setNewProjectOpen(false);
     setProjectName('');
     setClientName('');
+    setParcelCoordinates(null);
+    
+    // Navigate to the new project
+    navigate(`/project/${project.id}`);
+  };
+
+  const handleCoordinatesLoaded = (coordinates: Coordinate[]) => {
+    setParcelCoordinates(coordinates);
   };
 
   const handleSignOut = async () => {
@@ -173,7 +195,7 @@ export default function Dashboard() {
                         New Project
                       </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                       <DialogHeader>
                         <DialogTitle>Create New Project</DialogTitle>
                       </DialogHeader>
@@ -197,8 +219,24 @@ export default function Dashboard() {
                             onChange={(e) => setClientName(e.target.value)}
                           />
                         </div>
-                        <Button type="submit" variant="survey" className="w-full" disabled={createProject.isPending}>
-                          {createProject.isPending ? 'Creating...' : 'Create Project'}
+                        
+                        {/* CSV Upload Section */}
+                        <div className="pt-2">
+                          <ParcelUpload onCoordinatesLoaded={handleCoordinatesLoaded} />
+                        </div>
+
+                        <Button 
+                          type="submit" 
+                          variant="survey" 
+                          className="w-full" 
+                          disabled={createProject.isPending || createParcel.isPending || !parcelCoordinates}
+                        >
+                          {createProject.isPending || createParcel.isPending 
+                            ? 'Creating...' 
+                            : !parcelCoordinates 
+                              ? 'Upload coordinates to continue'
+                              : 'Create Project'
+                          }
                         </Button>
                       </form>
                     </DialogContent>
