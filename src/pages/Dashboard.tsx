@@ -7,8 +7,22 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus, MapPin, FolderOpen, LogOut, Clock, CheckCircle, FileText } from 'lucide-react';
-import { formatArea } from '@/lib/geometry';
+import { 
+  Plus, MapPin, FolderOpen, LogOut, Clock, CheckCircle, FileText, 
+  Grid3X3, Download, Map, Settings, Home, Layers
+} from 'lucide-react';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from '@/components/ui/sidebar';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -16,6 +30,7 @@ export default function Dashboard() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [clientName, setClientName] = useState('');
+  const [activeSection, setActiveSection] = useState('projects');
 
   const { data: projects, isLoading } = useProjects();
   const createProject = useCreateProject();
@@ -57,124 +72,265 @@ export default function Dashboard() {
     }
   };
 
+  const menuItems = [
+    { id: 'projects', label: 'Projects', icon: FolderOpen },
+    { id: 'subdivisions', label: 'Subdivisions', icon: Grid3X3 },
+    { id: 'maps', label: 'Maps & Parcels', icon: Map },
+    { id: 'exports', label: 'Exports', icon: Download },
+  ];
+
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-topographic">
-      {/* Header */}
-      <header className="border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <MapPin className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="font-semibold text-lg">SurveyAI Pro</h1>
-              <p className="text-xs text-muted-foreground">Land Subdivision System</p>
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full bg-topographic">
+        {/* Sidebar */}
+        <Sidebar className="border-r border-border">
+          <div className="p-4 border-b border-border">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <MapPin className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <h1 className="font-semibold text-lg">SurveyAI Pro</h1>
+                <p className="text-xs text-muted-foreground">Land Subdivision</p>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">{user.email}</span>
-            <Button variant="ghost" size="sm" onClick={handleSignOut}>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {menuItems.map((item) => (
+                    <SidebarMenuItem key={item.id}>
+                      <SidebarMenuButton 
+                        onClick={() => setActiveSection(item.id)}
+                        isActive={activeSection === item.id}
+                        className="w-full"
+                      >
+                        <item.icon className="h-4 w-4 mr-2" />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+
+            <SidebarGroup>
+              <SidebarGroupLabel>Quick Actions</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={() => setNewProjectOpen(true)} className="w-full">
+                      <Plus className="h-4 w-4 mr-2" />
+                      <span>New Project</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+
+          <div className="mt-auto p-4 border-t border-border">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-xs font-medium text-primary">
+                  {user.email?.charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{user.email}</p>
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={handleSignOut} className="w-full justify-start">
               <LogOut className="h-4 w-4 mr-2" />
               Sign Out
             </Button>
           </div>
-        </div>
-      </header>
+        </Sidebar>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h2 className="text-2xl font-bold">Survey Projects</h2>
-            <p className="text-muted-foreground">Manage your land subdivision projects</p>
-          </div>
-          <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
-            <DialogTrigger asChild>
-              <Button variant="survey" size="lg">
-                <Plus className="h-5 w-5 mr-2" />
-                New Project
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create New Project</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleCreateProject} className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Project Name</Label>
-                  <Input
-                    id="name"
-                    placeholder="e.g., Westlands Subdivision"
-                    value={projectName}
-                    onChange={(e) => setProjectName(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="client">Client Name (Optional)</Label>
-                  <Input
-                    id="client"
-                    placeholder="e.g., ABC Developers Ltd"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                  />
-                </div>
-                <Button type="submit" variant="survey" className="w-full" disabled={createProject.isPending}>
-                  {createProject.isPending ? 'Creating...' : 'Create Project'}
-                </Button>
-              </form>
-            </DialogContent>
-          </Dialog>
-        </div>
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col">
+          <header className="border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-50 h-14 flex items-center px-4">
+            <SidebarTrigger className="mr-4" />
+            <h2 className="text-lg font-semibold capitalize">{activeSection.replace('_', ' ')}</h2>
+          </header>
 
-        {/* Projects Grid */}
-        {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1, 2, 3].map((i) => (
-              <Card key={i} className="skeleton-shimmer h-48" />
-            ))}
-          </div>
-        ) : projects && projects.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {projects.map((project) => (
-              <Card key={project.id} variant="glow" className="cursor-pointer hover:scale-[1.02] transition-transform" onClick={() => navigate(`/project/${project.id}`)}>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <CardTitle className="text-lg">{project.name}</CardTitle>
-                      <CardDescription>{project.client_name || 'No client assigned'}</CardDescription>
-                    </div>
-                    {statusIcon(project.status)}
+          <main className="flex-1 p-6 overflow-auto">
+            {activeSection === 'projects' && (
+              <>
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h2 className="text-2xl font-bold">Survey Projects</h2>
+                    <p className="text-muted-foreground">Manage your land subdivision projects</p>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                    <span className="capitalize">{project.status.replace('_', ' ')}</span>
-                    <span>•</span>
-                    <span>{new Date(project.created_at).toLocaleDateString()}</span>
+                  <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="survey" size="lg">
+                        <Plus className="h-5 w-5 mr-2" />
+                        New Project
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Create New Project</DialogTitle>
+                      </DialogHeader>
+                      <form onSubmit={handleCreateProject} className="space-y-4 mt-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="name">Project Name</Label>
+                          <Input
+                            id="name"
+                            placeholder="e.g., Westlands Subdivision"
+                            value={projectName}
+                            onChange={(e) => setProjectName(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="client">Client Name (Optional)</Label>
+                          <Input
+                            id="client"
+                            placeholder="e.g., ABC Developers Ltd"
+                            value={clientName}
+                            onChange={(e) => setClientName(e.target.value)}
+                          />
+                        </div>
+                        <Button type="submit" variant="survey" className="w-full" disabled={createProject.isPending}>
+                          {createProject.isPending ? 'Creating...' : 'Create Project'}
+                        </Button>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+
+                {isLoading ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {[1, 2, 3].map((i) => (
+                      <Card key={i} className="skeleton-shimmer h-48" />
+                    ))}
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <Card className="text-center py-16">
-            <CardContent>
-              <FolderOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-xl font-semibold mb-2">No Projects Yet</h3>
-              <p className="text-muted-foreground mb-6">
-                Create your first survey project to get started
-              </p>
-              <Button variant="survey" onClick={() => setNewProjectOpen(true)}>
-                <Plus className="h-5 w-5 mr-2" />
-                Create Project
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-      </main>
-    </div>
+                ) : projects && projects.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {projects.map((project) => (
+                      <Card key={project.id} variant="glow" className="cursor-pointer hover:scale-[1.02] transition-transform" onClick={() => navigate(`/project/${project.id}`)}>
+                        <CardHeader>
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <CardTitle className="text-lg">{project.name}</CardTitle>
+                              <CardDescription>{project.client_name || 'No client assigned'}</CardDescription>
+                            </div>
+                            {statusIcon(project.status)}
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                            <span className="capitalize">{project.status.replace('_', ' ')}</span>
+                            <span>•</span>
+                            <span>{new Date(project.created_at).toLocaleDateString()}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <Card className="text-center py-16">
+                    <CardContent>
+                      <FolderOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
+                      <h3 className="text-xl font-semibold mb-2">No Projects Yet</h3>
+                      <p className="text-muted-foreground mb-6">
+                        Create your first survey project to get started
+                      </p>
+                      <Button variant="survey" onClick={() => setNewProjectOpen(true)}>
+                        <Plus className="h-5 w-5 mr-2" />
+                        Create Project
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            )}
+
+            {activeSection === 'subdivisions' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-2xl font-bold">Subdivisions</h2>
+                  <p className="text-muted-foreground">AI-powered land subdivision and plot generation</p>
+                </div>
+                <Card className="p-8 text-center">
+                  <Grid3X3 className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="text-xl font-semibold mb-2">Select a Project</h3>
+                  <p className="text-muted-foreground mb-4">
+                    Open a project to access subdivision tools and AI-powered plot generation
+                  </p>
+                  <Button variant="survey" onClick={() => setActiveSection('projects')}>
+                    View Projects
+                  </Button>
+                </Card>
+              </div>
+            )}
+
+            {activeSection === 'maps' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-2xl font-bold">Maps & Parcels</h2>
+                  <p className="text-muted-foreground">Upload and manage parcel boundaries</p>
+                </div>
+                <Card className="p-8 text-center">
+                  <Map className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="text-xl font-semibold mb-2">Parcel Management</h3>
+                  <p className="text-muted-foreground mb-4">
+                    Upload GeoJSON/KML files or draw boundaries within a project
+                  </p>
+                  <Button variant="survey" onClick={() => setActiveSection('projects')}>
+                    Open a Project
+                  </Button>
+                </Card>
+              </div>
+            )}
+
+            {activeSection === 'exports' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-2xl font-bold">Exports</h2>
+                  <p className="text-muted-foreground">Export mutation maps, beacon lists, and GIS data</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Card className="p-6">
+                    <FileText className="h-10 w-10 text-primary mb-3" />
+                    <h4 className="font-semibold mb-1">PDF Reports</h4>
+                    <p className="text-sm text-muted-foreground">Mutation maps and beacon lists</p>
+                  </Card>
+                  <Card className="p-6">
+                    <Layers className="h-10 w-10 text-primary mb-3" />
+                    <h4 className="font-semibold mb-1">GeoJSON</h4>
+                    <p className="text-sm text-muted-foreground">Standard GIS format</p>
+                  </Card>
+                  <Card className="p-6">
+                    <Map className="h-10 w-10 text-primary mb-3" />
+                    <h4 className="font-semibold mb-1">KML</h4>
+                    <p className="text-sm text-muted-foreground">Google Earth compatible</p>
+                  </Card>
+                  <Card className="p-6">
+                    <Download className="h-10 w-10 text-primary mb-3" />
+                    <h4 className="font-semibold mb-1">CSV</h4>
+                    <p className="text-sm text-muted-foreground">Beacon coordinate tables</p>
+                  </Card>
+                </div>
+                <Card className="p-6 text-center">
+                  <p className="text-muted-foreground">
+                    Export options are available within each project after subdivision is complete
+                  </p>
+                  <Button variant="survey" className="mt-4" onClick={() => setActiveSection('projects')}>
+                    Go to Projects
+                  </Button>
+                </Card>
+              </div>
+            )}
+          </main>
+        </div>
+      </div>
+    </SidebarProvider>
   );
 }
