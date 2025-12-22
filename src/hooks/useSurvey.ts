@@ -1,0 +1,140 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { Project, Parcel, Subdivision, Plot, Beacon, Coordinate, SubdivisionFormData } from '@/types/survey';
+import { calculatePolygonArea, calculatePerimeter, calculateCentroid } from '@/lib/geometry';
+import { toast } from 'sonner';
+
+// Projects
+export function useProjects() {
+  return useQuery({
+    queryKey: ['projects'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data as unknown as Project[];
+    },
+  });
+}
+
+export function useProject(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ['project', projectId],
+    enabled: !!projectId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('projects')
+        .select(`
+          *,
+          parcels (
+            *,
+            subdivisions (
+              *,
+              plots (
+                *,
+                beacons (*)
+              )
+            )
+          )
+        `)
+        .eq('id', projectId)
+        .single();
+
+      if (error) throw error;
+      return data as unknown as Project;
+    },
+  });
+}
+
+export function useCreateProject() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (project: { name: string; description?: string; client_name?: string; client_email?: string }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { data, error } = await supabase
+        .from('projects')
+        .insert({
+          ...project,
+          user_id: user.id,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as unknown as Project;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      toast.success('Project created successfully');
+    },
+    onError: (error) => {
+      toast.error('Failed to create project: ' + error.message);
+    },
+  });
+}
+
+export function useCreateParcel() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ projectId, coordinates, name }: { projectId: string; coordinates: Coordinate[]; name?: string }) => {
+      const area_sqm = calculatePolygonArea(coordinates);
+      const perimeter_m = calculatePerimeter(coordinates);
+      const centroid = calculateCentroid(coordinates);
+
+      const { data, error } = await supabase
+        .from('parcels')
+        .insert({
+          project_id: projectId,
+          name: name || 'Parent Parcel',
+          coordinates: coordinates as unknown as any,
+          area_sqm,
+          perimeter_m,
+          centroid: centroid as unknown as any,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as unknown as Parcel;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['project'] });
+      toast.success('Parcel created successfully');
+    },
+    onError: (error) => {
+      toast.error('Failed to create parcel: ' + error.message);
+    },
+  });
+}
+
+export function useAISubdivision() {
+  return useMutation({
+    mutationFn: async ({ 
+      parcelCoordinates, 
+      formData 
+    }: { 
+      parcelCoordinates: Coordinate[]; 
+      formData: SubdivisionFormData 
+    }) => {
+      const { data, error } = await supabase.functions.invoke('ai-subdivide', {
+        body: { 
+          parcelCoordinates,
+          ...formData,
+        },
+      });
+
+      if (error) throw error;
+      return data;
+    },
+    onError: (error) => {
+      toast.error('AI subdivision failed: ' + error.message);
+    },
+  });
+}
