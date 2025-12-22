@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { MapContainer, TileLayer, Polygon, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -23,17 +23,17 @@ interface SurveyMapProps {
 }
 
 // Custom beacon icon
-const beaconIcon = new L.DivIcon({
+const createBeaconIcon = () => new L.DivIcon({
   className: 'beacon-marker',
-  html: `<div class="w-4 h-4 bg-survey-beacon border-2 border-background rounded-full shadow-lg animate-pulse-glow"></div>`,
+  html: '<div style="width: 16px; height: 16px; background: #ef4444; border: 2px solid #0a0f1a; border-radius: 50%; box-shadow: 0 0 10px rgba(239,68,68,0.6);"></div>',
   iconSize: [16, 16],
   iconAnchor: [8, 8],
 });
 
 // Plot beacon icon
-const plotBeaconIcon = new L.DivIcon({
+const createPlotBeaconIcon = () => new L.DivIcon({
   className: 'plot-beacon-marker',
-  html: `<div class="w-3 h-3 bg-survey-accent border border-background rounded-full shadow-md"></div>`,
+  html: '<div style="width: 12px; height: 12px; background: #00d4aa; border: 1px solid #0a0f1a; border-radius: 50%; box-shadow: 0 0 6px rgba(0,212,170,0.5);"></div>',
   iconSize: [12, 12],
   iconAnchor: [6, 6],
 });
@@ -80,6 +80,9 @@ export function SurveyMap({
 }: SurveyMapProps) {
   const [hoveredCoord, setHoveredCoord] = useState<Coordinate | null>(null);
 
+  const beaconIcon = useMemo(() => createBeaconIcon(), []);
+  const plotBeaconIcon = useMemo(() => createPlotBeaconIcon(), []);
+
   const handleHover = (coord: Coordinate | null) => {
     setHoveredCoord(coord);
     onCoordinateHover?.(coord);
@@ -91,7 +94,10 @@ export function SurveyMap({
     : [0, 0];
 
   // Convert coordinates for Leaflet
-  const parcelPositions = parcelCoordinates.map(c => [c.lat, c.lng] as [number, number]);
+  const parcelPositions = useMemo(() => 
+    parcelCoordinates.map(c => [c.lat, c.lng] as [number, number]),
+    [parcelCoordinates]
+  );
 
   // Plot colors for visualization
   const plotColors = [
@@ -105,7 +111,7 @@ export function SurveyMap({
         center={defaultCenter}
         zoom={15}
         className="h-full w-full min-h-[400px]"
-        style={{ background: 'hsl(var(--survey-dark))' }}
+        style={{ background: '#0a0f1a' }}
       >
         {/* Tile Layer - OpenStreetMap or Satellite */}
         {showSatellite ? (
@@ -131,9 +137,9 @@ export function SurveyMap({
           <Polygon
             positions={parcelPositions}
             pathOptions={{
-              color: 'hsl(var(--survey-primary))',
+              color: '#00d4aa',
               weight: 3,
-              fillColor: 'hsl(var(--survey-primary))',
+              fillColor: '#00d4aa',
               fillOpacity: 0.15,
               dashArray: '5, 5',
             }}
@@ -182,7 +188,7 @@ export function SurveyMap({
                 <p>Lng: {formatCoordinate(beacon.longitude)}</p>
                 {beacon.northing && <p>N: {beacon.northing.toFixed(3)}</p>}
                 {beacon.easting && <p>E: {beacon.easting.toFixed(3)}</p>}
-                {beacon.description && <p className="mt-1 text-muted-foreground">{beacon.description}</p>}
+                {beacon.description && <p className="mt-1 text-gray-500">{beacon.description}</p>}
               </div>
             </Popup>
           </Marker>
@@ -222,11 +228,11 @@ export function SurveyMap({
       {/* Map Controls Legend */}
       <div className="absolute top-4 right-4 bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-2 text-xs">
         <div className="flex items-center gap-2 mb-1">
-          <div className="w-3 h-3 rounded-full bg-survey-beacon animate-pulse"></div>
+          <div className="w-3 h-3 rounded-full bg-destructive animate-pulse"></div>
           <span>Parcel Beacon</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-survey-accent"></div>
+          <div className="w-2 h-2 rounded-full bg-survey-primary"></div>
           <span>Plot Corner</span>
         </div>
       </div>
