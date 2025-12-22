@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Layers, Download, Map, Satellite } from 'lucide-react';
+import { ArrowLeft, Layers, Map, Satellite } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SurveyMap, ParcelUpload } from '@/components/map';
 import { SubdivisionForm, SuggestionsPanel } from '@/components/subdivision';
+import { ExportDialog } from '@/components/export';
 import { useProject, useCreateParcel } from '@/hooks/useSurvey';
 import { Coordinate, Beacon, Plot, AISuggestion } from '@/types/survey';
 import { calculateArea, calculatePerimeter, formatArea } from '@/lib/geometry';
@@ -105,10 +106,14 @@ export default function Project() {
                 {showSatellite ? <Map className="h-4 w-4 mr-2" /> : <Satellite className="h-4 w-4 mr-2" />}
                 {showSatellite ? 'Map View' : 'Satellite'}
               </Button>
-              <Button variant="outline" size="sm" disabled={plots.length === 0}>
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </Button>
+              <ExportDialog
+                projectName={project?.name || 'Project'}
+                clientName={project?.client_name || undefined}
+                parcelCoordinates={parcelCoordinates}
+                plots={plots}
+                beacons={beacons}
+                disabled={plots.length === 0}
+              />
             </div>
           </div>
         </div>
