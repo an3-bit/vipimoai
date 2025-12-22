@@ -15,9 +15,8 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // Workaround for a Vite pre-bundling edge case that can cause
-  // "render2 is not a function" inside react-leaflet Context.Consumer.
+  // Workaround for react-leaflet module resolution issues
   optimizeDeps: {
-    exclude: ["react-leaflet", "@react-leaflet/core", "leaflet"],
+    include: ["react", "react-dom"],
   },
 }));
