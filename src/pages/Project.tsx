@@ -1,17 +1,28 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Layers, Map, Satellite } from 'lucide-react';
+import { ArrowLeft, Map, Satellite } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { SurveyMap, ParcelUpload } from '@/components/map';
-import { SubdivisionForm, SuggestionsPanel } from '@/components/subdivision';
-import { ExportDialog } from '@/components/export';
 import { useProject, useCreateParcel } from '@/hooks/useSurvey';
 import { Coordinate, Beacon, Plot, AISuggestion } from '@/types/survey';
-import { calculateArea, calculatePerimeter, formatArea } from '@/lib/geometry';
 import { supabase } from '@/integrations/supabase/client';
 import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
+import {
+  WizardProgress,
+  UploadStep,
+  BeaconStep,
+  SubdivisionStep,
+  AIStep,
+  ExportStep,
+} from '@/components/wizard';
+
+const WIZARD_STEPS = [
+  { id: 1, title: 'Upload', description: 'Load coordinates' },
+  { id: 2, title: 'Beacons', description: 'Confirm boundaries' },
+  { id: 3, title: 'Subdivide', description: 'Configure plots' },
+  { id: 4, title: 'AI Results', description: 'Review layout' },
+  { id: 5, title: 'Export', description: 'Generate outputs' },
+];
 
 export default function Project() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -19,12 +30,12 @@ export default function Project() {
   const { data: project, isLoading } = useProject(projectId);
   const createParcel = useCreateParcel();
 
+  const [currentStep, setCurrentStep] = useState(1);
   const [showSatellite, setShowSatellite] = useState(false);
   const [parcelCoordinates, setParcelCoordinates] = useState<Coordinate[]>([]);
   const [plots, setPlots] = useState<Plot[]>([]);
   const [beacons, setBeacons] = useState<Beacon[]>([]);
   const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
-  const [activeTab, setActiveTab] = useState('upload');
 
   // Check auth
   useEffect(() => {
@@ -33,37 +44,68 @@ export default function Project() {
     });
   }, [navigate]);
 
-  // Load existing parcel coordinates
+  // Load existing parcel coordinates and determine starting step
   useEffect(() => {
     if (project?.parcels && project.parcels.length > 0) {
       const parcel = project.parcels[0];
       const coords = parcel.coordinates as unknown as Coordinate[];
-      if (Array.isArray(coords)) {
+      if (Array.isArray(coords) && coords.length >= 3) {
         setParcelCoordinates(coords);
-        setActiveTab('subdivide');
+        // If parcel exists, start at step 2
+        if (currentStep === 1) {
+          setCurrentStep(2);
+        }
       }
     }
   }, [project]);
 
   const handleCoordinatesLoaded = async (coordinates: Coordinate[]) => {
     setParcelCoordinates(coordinates);
-    setActiveTab('subdivide');
 
-    // Save parcel to database
-    if (projectId) {
-      await createParcel.mutateAsync({
-        projectId,
-        name: 'Main Parcel',
-        coordinates,
-      });
+    // Save parcel to database if it doesn't exist
+    if (projectId && (!project?.parcels || project.parcels.length === 0)) {
+      try {
+        await createParcel.mutateAsync({
+          projectId,
+          name: 'Main Parcel',
+          coordinates,
+        });
+      } catch (error) {
+        console.error('Error saving parcel:', error);
+      }
     }
   };
 
-  const handleSubdivisionComplete = (newPlots: Plot[], newBeacons: Beacon[], newSuggestions: AISuggestion[]) => {
+  const handleSubdivisionComplete = (
+    newPlots: Plot[],
+    newBeacons: Beacon[],
+    newSuggestions: AISuggestion[]
+  ) => {
     setPlots(newPlots);
     setBeacons(newBeacons);
     setSuggestions(newSuggestions);
-    setActiveTab('beacons');
+    // Auto-advance to AI results step
+    setCurrentStep(4);
+  };
+
+  const handleProjectComplete = () => {
+    toast.success('Project completed successfully!');
+    navigate('/dashboard');
+  };
+
+  const goToStep = (step: number) => {
+    // Only allow going to steps that have been unlocked
+    if (step === 1) {
+      setCurrentStep(1);
+    } else if (step === 2 && parcelCoordinates.length >= 3) {
+      setCurrentStep(2);
+    } else if (step === 3 && parcelCoordinates.length >= 3) {
+      setCurrentStep(3);
+    } else if (step === 4 && plots.length > 0) {
+      setCurrentStep(4);
+    } else if (step === 5 && plots.length > 0) {
+      setCurrentStep(5);
+    }
   };
 
   if (isLoading) {
@@ -71,6 +113,7 @@ export default function Project() {
       <div className="min-h-screen bg-background p-6">
         <div className="max-w-7xl mx-auto space-y-6">
           <Skeleton className="h-10 w-48" />
+          <Skeleton className="h-20 w-full" />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <Skeleton className="h-[500px] lg:col-span-2" />
             <Skeleton className="h-[500px]" />
@@ -106,144 +149,70 @@ export default function Project() {
                 {showSatellite ? <Map className="h-4 w-4 mr-2" /> : <Satellite className="h-4 w-4 mr-2" />}
                 {showSatellite ? 'Map View' : 'Satellite'}
               </Button>
-              <ExportDialog
-                projectName={project?.name || 'Project'}
-                clientName={project?.client_name || undefined}
-                parcelCoordinates={parcelCoordinates}
-                plots={plots}
-                beacons={beacons}
-                disabled={plots.length === 0}
-              />
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Map Section */}
-          <div className="lg:col-span-2 space-y-4">
-            <SurveyMap
-              parcelCoordinates={parcelCoordinates}
-              plots={plots}
-              beacons={beacons}
-              showSatellite={showSatellite}
-              className="h-[500px]"
-            />
+      {/* Wizard Progress */}
+      <div className="max-w-5xl mx-auto px-6 py-6">
+        <WizardProgress
+          steps={WIZARD_STEPS}
+          currentStep={currentStep}
+          onStepClick={goToStep}
+        />
+      </div>
 
-            {/* Parcel Info */}
-            {parcelCoordinates.length > 0 && (
-              <Card variant="glass">
-                <CardContent className="py-4">
-                  <div className="grid grid-cols-4 gap-4 text-center">
-                    <div>
-                      <p className="text-2xl font-bold text-survey-primary">
-                        {formatArea(calculateArea(parcelCoordinates))}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Total Area</p>
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-survey-accent">
-                        {calculatePerimeter(parcelCoordinates).toFixed(0)} m
-                      </p>
-                      <p className="text-xs text-muted-foreground">Perimeter</p>
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-survey-success">
-                        {plots.length}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Plots</p>
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-survey-beacon">
-                        {beacons.length}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Beacons</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+      {/* Main Content - Step Views */}
+      <main className="max-w-7xl mx-auto px-6 pb-12">
+        {currentStep === 1 && (
+          <UploadStep
+            parcelCoordinates={parcelCoordinates}
+            onCoordinatesLoaded={handleCoordinatesLoaded}
+            onNext={() => setCurrentStep(2)}
+          />
+        )}
 
-            {/* AI Suggestions */}
-            {suggestions.length > 0 && (
-              <SuggestionsPanel suggestions={suggestions} />
-            )}
-          </div>
+        {currentStep === 2 && (
+          <BeaconStep
+            parcelCoordinates={parcelCoordinates}
+            onBack={() => setCurrentStep(1)}
+            onNext={() => setCurrentStep(3)}
+          />
+        )}
 
-          {/* Sidebar */}
-          <div className="space-y-4">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="upload">Upload</TabsTrigger>
-                <TabsTrigger value="subdivide">Subdivide</TabsTrigger>
-                <TabsTrigger value="beacons">Beacons</TabsTrigger>
-              </TabsList>
+        {currentStep === 3 && (
+          <SubdivisionStep
+            parcelCoordinates={parcelCoordinates}
+            plots={plots}
+            beacons={beacons}
+            onBack={() => setCurrentStep(2)}
+            onSubdivisionComplete={handleSubdivisionComplete}
+          />
+        )}
 
-              <TabsContent value="upload" className="mt-4">
-                <ParcelUpload onCoordinatesLoaded={handleCoordinatesLoaded} />
-              </TabsContent>
+        {currentStep === 4 && (
+          <AIStep
+            parcelCoordinates={parcelCoordinates}
+            plots={plots}
+            beacons={beacons}
+            suggestions={suggestions}
+            onBack={() => setCurrentStep(3)}
+            onNext={() => setCurrentStep(5)}
+          />
+        )}
 
-              <TabsContent value="subdivide" className="mt-4">
-                {parcelCoordinates.length === 0 ? (
-                  <Card>
-                    <CardContent className="py-8 text-center">
-                      <p className="text-sm text-muted-foreground">
-                        Upload a parcel first to configure subdivision
-                      </p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <SubdivisionForm
-                    parcelCoordinates={parcelCoordinates}
-                    onSubdivisionComplete={handleSubdivisionComplete}
-                  />
-                )}
-              </TabsContent>
-
-              <TabsContent value="beacons" className="mt-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Layers className="h-5 w-5 text-survey-beacon" />
-                      Beacon List ({beacons.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {beacons.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-8">
-                        No beacons yet. Subdivide the parcel to generate beacons.
-                      </p>
-                    ) : (
-                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
-                        {beacons.map((beacon) => (
-                          <div
-                            key={beacon.id}
-                            className="p-3 rounded-md bg-muted/50 font-mono text-xs border border-border/50 hover:border-survey-beacon/50 transition-colors"
-                          >
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="font-semibold text-survey-beacon">
-                                B{beacon.beacon_number}
-                              </span>
-                              <span className="text-muted-foreground text-[10px]">
-                                {beacon.description}
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-muted-foreground">
-                              <span>Lat: {beacon.latitude.toFixed(6)}</span>
-                              <span>Lng: {beacon.longitude.toFixed(6)}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
-          </div>
-        </div>
+        {currentStep === 5 && (
+          <ExportStep
+            projectName={project?.name || 'Project'}
+            clientName={project?.client_name || undefined}
+            parcelCoordinates={parcelCoordinates}
+            plots={plots}
+            beacons={beacons}
+            onBack={() => setCurrentStep(4)}
+            onComplete={handleProjectComplete}
+          />
+        )}
       </main>
     </div>
   );
