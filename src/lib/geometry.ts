@@ -85,10 +85,18 @@ export function formatDistance(meters: number): string {
   return `${meters.toFixed(1)} m`;
 }
 
-// Format coordinates for display
-export function formatCoordinate(coord: Coordinate, precision: number = 6): string {
+// Format coordinates for display (single number version)
+export function formatCoordinate(value: number, precision: number = 6): string {
+  return value.toFixed(precision);
+}
+
+// Format coordinate pair for display
+export function formatCoordinatePair(coord: Coordinate, precision: number = 6): string {
   return `${coord.lat.toFixed(precision)}, ${coord.lng.toFixed(precision)}`;
 }
+
+// Alias for calculatePolygonArea for convenience
+export const calculateArea = calculatePolygonArea;
 
 // Parse CSV coordinates (format: "lat,lng" per line or "lat,lng;lat,lng...")
 export function parseCSVCoordinates(csvText: string): Coordinate[] {

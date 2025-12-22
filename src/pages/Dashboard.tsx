@@ -139,7 +139,7 @@ export default function Dashboard() {
         ) : projects && projects.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {projects.map((project) => (
-              <Card key={project.id} variant="glow" className="cursor-pointer hover:scale-[1.02] transition-transform">
+              <Card key={project.id} variant="glow" className="cursor-pointer hover:scale-[1.02] transition-transform" onClick={() => navigate(`/project/${project.id}`)}>
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <div>
