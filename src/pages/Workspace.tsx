@@ -1,21 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Polygon, Marker, useMap, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Polygon, useMap, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { supabase } from '@/integrations/supabase/client';
+import { useProject, useProjectPlots, useCreatePlots, useDeleteProjectPlots, useUpdateProject } from '@/hooks/useSurvey';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { 
   ArrowLeft, Map, Layers, Mountain, Upload, AlertTriangle, Grid3X3, 
-  FileText, Send, MessageSquare, ChevronDown, ChevronUp, Loader2,
-  Download, Settings, ZoomIn, ZoomOut, Crosshair
+  FileText, Send, MessageSquare, ChevronDown, Loader2,
+  Download, Settings
 } from 'lucide-react';
-import { mockParcelCoordinates, mockRiparianZone, generatePlotGrid, mockChatMessages } from '@/data/mockData';
+import { mockRiparianZone, generatePlotGrid, mockChatMessages } from '@/data/mockData';
 import { MutationFormModal } from '@/components/workspace/MutationFormModal';
 
 // Map controller component
@@ -43,6 +45,13 @@ export default function Workspace() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   
+  // Fetch real project data
+  const { data: project, isLoading: projectLoading, error: projectError } = useProject(projectId);
+  const { data: savedPlots, isLoading: plotsLoading, refetch: refetchPlots } = useProjectPlots(projectId);
+  const createPlots = useCreatePlots();
+  const deletePlots = useDeleteProjectPlots();
+  const updateProject = useUpdateProject();
+  
   // Map state
   const [mapLayer, setMapLayer] = useState<'standard' | 'satellite' | 'topo'>('standard');
   
@@ -50,9 +59,9 @@ export default function Workspace() {
   const [showHazardZone, setShowHazardZone] = useState(false);
   const [showPlotGrid, setShowPlotGrid] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   // Form state
-  const [projectName, setProjectName] = useState('Juja Farm Block 4');
   const [plotSize, setPlotSize] = useState('50x100');
   const [customWidth, setCustomWidth] = useState('15.24');
   const [customDepth, setCustomDepth] = useState('30.48');
@@ -72,52 +81,108 @@ export default function Workspace() {
   const [plotGrid, setPlotGrid] = useState<{ lat: number; lng: number }[][]>([]);
   const [plotCount, setPlotCount] = useState(0);
   const [efficiency, setEfficiency] = useState(0);
-  
-  // Parcel data (using mock for demo)
-  const parcelCoordinates = mockParcelCoordinates;
+
+  // Get parcel coordinates from project
+  const parcelCoordinates = project?.parcels?.[0]?.coordinates as { lat: number; lng: number }[] || [];
   const riparianZone = mockRiparianZone;
   
-  // Calculate area (approximate)
-  const totalAreaAcres = 40; // Mock value
-  const totalAreaHa = totalAreaAcres * 0.404686;
+  // Calculate area
+  const parcelAreaSqm = project?.parcels?.[0]?.area_sqm || 0;
+  const totalAreaAcres = parcelAreaSqm / 4046.86;
+  const totalAreaHa = parcelAreaSqm / 10000;
+
+  // Load saved plots on mount
+  useEffect(() => {
+    if (savedPlots && savedPlots.length > 0) {
+      const loadedPlots = savedPlots.map((plot: any) => plot.coordinates as { lat: number; lng: number }[]);
+      setPlotGrid(loadedPlots);
+      setPlotCount(savedPlots.length);
+      setShowPlotGrid(true);
+      setEfficiency(88); // Calculate based on coverage
+    }
+  }, [savedPlots]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
+
+  // Check auth
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) {
+        navigate('/auth');
+      }
+    });
+  }, [navigate]);
 
   const handleRunHazardScan = () => {
     setIsProcessing(true);
     setTimeout(() => {
       setShowHazardZone(true);
       setIsProcessing(false);
-      toast({
-        title: "Hazard Scan Complete",
-        description: "Warning: 3 plots overlap with riparian reserve. Affected areas highlighted in red.",
-        variant: "destructive",
-      });
+      toast.warning("Hazard Scan Complete: 3 plots overlap with riparian reserve. Affected areas highlighted in red.");
     }, 1500);
   };
 
-  const handleAutoSubdivide = () => {
+  const handleAutoSubdivide = async () => {
+    if (!projectId || parcelCoordinates.length === 0) {
+      toast.error("No parcel coordinates available");
+      return;
+    }
+
     setIsProcessing(true);
     
-    setTimeout(() => {
+    try {
+      // Delete existing plots first
+      if (savedPlots && savedPlots.length > 0) {
+        await deletePlots.mutateAsync(projectId);
+      }
+
       const width = plotSize === 'custom' ? parseFloat(customWidth) : 15.24;
       const depth = plotSize === 'custom' ? parseFloat(customDepth) : 30.48;
       const road = parseFloat(roadWidth);
       
+      // Generate plots locally
       const plots = generatePlotGrid(parcelCoordinates, width, depth, road);
+      
+      setIsSaving(true);
+      
+      // Prepare plots for database
+      const plotsToSave = plots.map((coords, index) => ({
+        plot_number: index + 1,
+        coordinates: coords,
+        area_sqm: width * depth, // Approximate
+        status: 'valid',
+      }));
+      
+      // Save to Supabase
+      await createPlots.mutateAsync({
+        projectId,
+        plots: plotsToSave,
+      });
+      
+      // Update local state
       setPlotGrid(plots);
       setPlotCount(plots.length);
       setEfficiency(88);
       setShowPlotGrid(true);
-      setIsProcessing(false);
       
-      toast({
-        title: "Auto-Subdivision Complete",
-        description: `Success: ${plots.length} Plots generated. Yield Efficiency: 88%.`,
+      // Update project status
+      await updateProject.mutateAsync({
+        projectId,
+        updates: { status: 'in_progress' },
       });
-    }, 1500);
+      
+      toast.success(`Success: ${plots.length} Plots generated and saved. Yield Efficiency: 88%.`);
+      
+      // Refetch to ensure sync
+      refetchPlots();
+    } catch (error: any) {
+      toast.error("Failed to subdivide: " + error.message);
+    } finally {
+      setIsProcessing(false);
+      setIsSaving(false);
+    }
   };
 
   const handleChatSubmit = (e: React.FormEvent) => {
@@ -165,6 +230,29 @@ export default function Workspace() {
     }
   };
 
+  if (projectLoading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading project...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (projectError || !project) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <AlertTriangle className="h-8 w-8 text-destructive mx-auto mb-4" />
+          <p className="text-muted-foreground mb-4">Project not found or access denied</p>
+          <Button onClick={() => navigate('/')}>Back to Dashboard</Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen w-screen overflow-hidden relative">
       {/* Full-screen Map */}
@@ -178,19 +266,23 @@ export default function Workspace() {
           attribution='&copy; OpenStreetMap contributors'
           url={getTileUrl()}
         />
-        <MapController coordinates={parcelCoordinates} />
+        {parcelCoordinates.length > 0 && (
+          <MapController coordinates={parcelCoordinates} />
+        )}
         
         {/* Parent Parcel Boundary */}
-        <Polygon
-          positions={parcelCoordinates.map(c => [c.lat, c.lng] as [number, number])}
-          pathOptions={{
-            color: 'hsl(160, 84%, 39%)',
-            weight: 3,
-            fillColor: 'hsl(160, 84%, 39%)',
-            fillOpacity: 0.1,
-            dashArray: '10, 5',
-          }}
-        />
+        {parcelCoordinates.length > 0 && (
+          <Polygon
+            positions={parcelCoordinates.map(c => [c.lat, c.lng] as [number, number])}
+            pathOptions={{
+              color: 'hsl(160, 84%, 39%)',
+              weight: 3,
+              fillColor: 'hsl(160, 84%, 39%)',
+              fillOpacity: 0.1,
+              dashArray: '10, 5',
+            }}
+          />
+        )}
         
         {/* Hazard Zone (Riparian) */}
         {showHazardZone && (
@@ -235,6 +327,16 @@ export default function Workspace() {
         ))}
       </MapContainer>
 
+      {/* Saving Indicator */}
+      {isSaving && (
+        <div className="absolute top-4 right-20 z-[1000]">
+          <div className="glass-panel rounded-lg px-4 py-2 flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="text-sm">Saving...</span>
+          </div>
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="absolute top-4 left-4 z-[1000] flex items-center gap-3">
         <button
@@ -244,8 +346,11 @@ export default function Workspace() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="glass-panel rounded-lg px-4 py-2">
-          <p className="font-semibold">{projectName}</p>
-          <p className="text-xs text-muted-foreground">Calculated: {totalAreaHa.toFixed(2)} Ha / {totalAreaAcres} Acres</p>
+          <p className="font-semibold">{project.name}</p>
+          <p className="text-xs text-muted-foreground">
+            {totalAreaHa.toFixed(2)} Ha / {totalAreaAcres.toFixed(1)} Acres
+            {(project as any).location_name && ` • ${(project as any).location_name}`}
+          </p>
         </div>
       </div>
 
@@ -359,6 +464,10 @@ export default function Workspace() {
                   <span className="text-muted-foreground">Yield Efficiency:</span>
                   <span className="font-mono font-semibold text-primary">{efficiency}%</span>
                 </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Status:</span>
+                  <span className="font-mono font-semibold text-success">Saved ✓</span>
+                </div>
               </div>
             )}
           </div>
@@ -383,7 +492,7 @@ export default function Workspace() {
             disabled={isProcessing}
             title="Run Hazard Scan"
           >
-            {isProcessing ? (
+            {isProcessing && !isSaving ? (
               <Loader2 className="h-5 w-5 animate-spin" />
             ) : (
               <AlertTriangle className="h-5 w-5" />
@@ -394,7 +503,7 @@ export default function Workspace() {
           <button 
             className={`tool-btn ${showPlotGrid ? 'active' : ''}`}
             onClick={handleAutoSubdivide}
-            disabled={isProcessing}
+            disabled={isProcessing || parcelCoordinates.length === 0}
             title="Auto-Subdivide"
           >
             {isProcessing ? (
@@ -411,6 +520,7 @@ export default function Workspace() {
             className="tool-btn"
             onClick={() => setMutationModalOpen(true)}
             title="Generate Mutation Form"
+            disabled={plotCount === 0}
           >
             <FileText className="h-5 w-5" />
           </button>
@@ -498,7 +608,8 @@ export default function Workspace() {
       <MutationFormModal 
         open={mutationModalOpen} 
         onOpenChange={setMutationModalOpen}
-        plotCount={plotCount}
+        projectId={projectId || ''}
+        projectName={project.name}
       />
     </div>
   );

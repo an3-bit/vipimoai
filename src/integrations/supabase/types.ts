@@ -145,7 +145,7 @@ export type Database = {
           plot_number: number
           project_id: string | null
           status: string | null
-          subdivision_id: string
+          subdivision_id: string | null
           width_m: number | null
         }
         Insert: {
@@ -158,7 +158,7 @@ export type Database = {
           plot_number: number
           project_id?: string | null
           status?: string | null
-          subdivision_id: string
+          subdivision_id?: string | null
           width_m?: number | null
         }
         Update: {
@@ -171,7 +171,7 @@ export type Database = {
           plot_number?: number
           project_id?: string | null
           status?: string | null
-          subdivision_id?: string
+          subdivision_id?: string | null
           width_m?: number | null
         }
         Relationships: [
