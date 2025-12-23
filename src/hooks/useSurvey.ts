@@ -49,11 +49,36 @@ export function useProject(projectId: string | undefined) {
   });
 }
 
+// Fetch plots directly by project_id
+export function useProjectPlots(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ['plots', projectId],
+    enabled: !!projectId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('plots')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('plot_number', { ascending: true });
+
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
 export function useCreateProject() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (project: { name: string; description?: string; client_name?: string; client_email?: string }) => {
+    mutationFn: async (project: { 
+      name: string; 
+      description?: string; 
+      client_name?: string; 
+      client_email?: string;
+      location_name?: string;
+      total_area_ha?: number;
+    }) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
@@ -75,6 +100,42 @@ export function useCreateProject() {
     },
     onError: (error) => {
       toast.error('Failed to create project: ' + error.message);
+    },
+  });
+}
+
+export function useUpdateProject() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ 
+      projectId, 
+      updates 
+    }: { 
+      projectId: string; 
+      updates: { 
+        name?: string; 
+        status?: string; 
+        location_name?: string; 
+        total_area_ha?: number;
+      } 
+    }) => {
+      const { data, error } = await supabase
+        .from('projects')
+        .update(updates)
+        .eq('id', projectId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['project', variables.projectId] });
+    },
+    onError: (error) => {
+      toast.error('Failed to update project: ' + error.message);
     },
   });
 }
@@ -110,6 +171,74 @@ export function useCreateParcel() {
     },
     onError: (error) => {
       toast.error('Failed to create parcel: ' + error.message);
+    },
+  });
+}
+
+// Create plots directly linked to a project
+export function useCreatePlots() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ 
+      projectId, 
+      plots 
+    }: { 
+      projectId: string; 
+      plots: { 
+        plot_number: number; 
+        coordinates: { lat: number; lng: number }[]; 
+        area_sqm: number;
+        status?: string;
+      }[] 
+    }) => {
+      const plotsToInsert = plots.map(plot => ({
+        project_id: projectId,
+        plot_number: plot.plot_number,
+        coordinates: plot.coordinates as unknown as any,
+        area_sqm: plot.area_sqm,
+        status: plot.status || 'valid',
+        // subdivision_id is nullable now, we're using direct project link
+      }));
+
+      const { data, error } = await supabase
+        .from('plots')
+        .insert(plotsToInsert)
+        .select();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['plots', variables.projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project', variables.projectId] });
+      toast.success('Plots saved successfully');
+    },
+    onError: (error) => {
+      toast.error('Failed to save plots: ' + error.message);
+    },
+  });
+}
+
+// Delete all plots for a project (for re-subdivision)
+export function useDeleteProjectPlots() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (projectId: string) => {
+      const { error } = await supabase
+        .from('plots')
+        .delete()
+        .eq('project_id', projectId);
+
+      if (error) throw error;
+    },
+    onSuccess: (_, projectId) => {
+      queryClient.invalidateQueries({ queryKey: ['plots', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+    },
+    onError: (error) => {
+      toast.error('Failed to delete plots: ' + error.message);
     },
   });
 }

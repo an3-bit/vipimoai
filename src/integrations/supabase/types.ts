@@ -143,6 +143,8 @@ export type Database = {
           id: string
           is_partial: boolean | null
           plot_number: number
+          project_id: string | null
+          status: string | null
           subdivision_id: string
           width_m: number | null
         }
@@ -154,6 +156,8 @@ export type Database = {
           id?: string
           is_partial?: boolean | null
           plot_number: number
+          project_id?: string | null
+          status?: string | null
           subdivision_id: string
           width_m?: number | null
         }
@@ -165,10 +169,19 @@ export type Database = {
           id?: string
           is_partial?: boolean | null
           plot_number?: number
+          project_id?: string | null
+          status?: string | null
           subdivision_id?: string
           width_m?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "plots_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "plots_subdivision_id_fkey"
             columns: ["subdivision_id"]
@@ -185,8 +198,10 @@ export type Database = {
           created_at: string
           description: string | null
           id: string
+          location_name: string | null
           name: string
           status: Database["public"]["Enums"]["project_status"]
+          total_area_ha: number | null
           updated_at: string
           user_id: string
         }
@@ -196,8 +211,10 @@ export type Database = {
           created_at?: string
           description?: string | null
           id?: string
+          location_name?: string | null
           name: string
           status?: Database["public"]["Enums"]["project_status"]
+          total_area_ha?: number | null
           updated_at?: string
           user_id: string
         }
@@ -207,8 +224,10 @@ export type Database = {
           created_at?: string
           description?: string | null
           id?: string
+          location_name?: string | null
           name?: string
           status?: Database["public"]["Enums"]["project_status"]
+          total_area_ha?: number | null
           updated_at?: string
           user_id?: string
         }
