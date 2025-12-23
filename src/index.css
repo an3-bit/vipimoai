@@ -6,8 +6,8 @@
 
 @layer base {
   :root {
-    /* Surveying Professional Dark Theme */
-    --background: 222 47% 6%;
+    /* VipimoAI Dark Engineering Theme */
+    --background: 222 47% 5%;
     --foreground: 210 40% 96%;
 
     --card: 222 47% 8%;
@@ -16,64 +16,71 @@
     --popover: 222 47% 10%;
     --popover-foreground: 210 40% 96%;
 
-    --primary: 173 80% 45%;
-    --primary-foreground: 222 47% 6%;
+    --primary: 160 84% 39%;
+    --primary-foreground: 222 47% 5%;
 
-    --secondary: 222 30% 14%;
+    --secondary: 222 30% 12%;
     --secondary-foreground: 210 40% 90%;
 
-    --muted: 222 30% 12%;
+    --muted: 222 30% 10%;
     --muted-foreground: 215 20% 55%;
 
     --accent: 38 92% 55%;
-    --accent-foreground: 222 47% 6%;
+    --accent-foreground: 222 47% 5%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 210 40% 98%;
 
     --success: 142 70% 45%;
-    --success-foreground: 222 47% 6%;
+    --success-foreground: 222 47% 5%;
 
     --warning: 38 92% 55%;
-    --warning-foreground: 222 47% 6%;
+    --warning-foreground: 222 47% 5%;
 
-    --border: 222 30% 18%;
-    --input: 222 30% 14%;
-    --ring: 173 80% 45%;
+    --border: 222 30% 15%;
+    --input: 222 30% 12%;
+    --ring: 160 84% 39%;
 
     --radius: 0.5rem;
 
     /* Survey-specific tokens */
-    --plot-primary: 173 80% 45%;
-    --plot-secondary: 199 89% 48%;
+    --plot-primary: 199 89% 48%;
+    --plot-secondary: 173 80% 45%;
     --plot-partial: 38 92% 55%;
     --beacon: 0 84% 60%;
-    --parcel-boundary: 280 70% 60%;
-    --grid-line: 222 30% 20%;
-    --topographic: 222 30% 15%;
+    --parcel-boundary: 160 84% 39%;
+    --grid-line: 222 30% 18%;
+    --hazard: 0 72% 51%;
+    --commercial: 280 70% 60%;
+
+    /* Glassmorphism */
+    --glass-bg: 222 47% 8% / 0.85;
+    --glass-border: 222 30% 20% / 0.5;
+    --glass-blur: 16px;
 
     /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(173, 80%, 45%) 0%, hsl(199, 89%, 48%) 100%);
-    --gradient-dark: linear-gradient(180deg, hsl(222, 47%, 8%) 0%, hsl(222, 47%, 4%) 100%);
-    --gradient-card: linear-gradient(135deg, hsl(222, 47%, 10%) 0%, hsl(222, 47%, 8%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(160, 84%, 39%) 0%, hsl(173, 80%, 45%) 100%);
+    --gradient-dark: linear-gradient(180deg, hsl(222, 47%, 6%) 0%, hsl(222, 47%, 3%) 100%);
+    --gradient-card: linear-gradient(135deg, hsl(222, 47%, 10%) 0%, hsl(222, 47%, 7%) 100%);
     --gradient-accent: linear-gradient(135deg, hsl(38, 92%, 55%) 0%, hsl(25, 95%, 53%) 100%);
+    --gradient-hazard: linear-gradient(135deg, hsl(0, 72%, 51%) 0%, hsl(0, 72%, 40%) 100%);
 
     /* Shadows */
-    --shadow-sm: 0 1px 2px 0 hsl(222 47% 3% / 0.5);
-    --shadow-md: 0 4px 6px -1px hsl(222 47% 3% / 0.5), 0 2px 4px -2px hsl(222 47% 3% / 0.5);
-    --shadow-lg: 0 10px 15px -3px hsl(222 47% 3% / 0.6), 0 4px 6px -4px hsl(222 47% 3% / 0.6);
-    --shadow-glow: 0 0 20px hsl(173 80% 45% / 0.3);
+    --shadow-sm: 0 1px 2px 0 hsl(222 47% 2% / 0.6);
+    --shadow-md: 0 4px 12px -1px hsl(222 47% 2% / 0.6), 0 2px 6px -2px hsl(222 47% 2% / 0.6);
+    --shadow-lg: 0 10px 25px -3px hsl(222 47% 2% / 0.7), 0 4px 10px -4px hsl(222 47% 2% / 0.7);
+    --shadow-glow: 0 0 30px hsl(160 84% 39% / 0.25);
     --shadow-beacon: 0 0 12px hsl(0 84% 60% / 0.6);
 
     /* Sidebar */
-    --sidebar-background: 222 47% 7%;
+    --sidebar-background: 222 47% 6%;
     --sidebar-foreground: 210 40% 90%;
-    --sidebar-primary: 173 80% 45%;
-    --sidebar-primary-foreground: 222 47% 6%;
-    --sidebar-accent: 222 30% 12%;
+    --sidebar-primary: 160 84% 39%;
+    --sidebar-primary-foreground: 222 47% 5%;
+    --sidebar-accent: 222 30% 10%;
     --sidebar-accent-foreground: 210 40% 90%;
-    --sidebar-border: 222 30% 15%;
-    --sidebar-ring: 173 80% 45%;
+    --sidebar-border: 222 30% 12%;
+    --sidebar-ring: 160 84% 39%;
   }
 
   .dark {
@@ -91,25 +98,22 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
-  /* Monospace for coordinates */
   .font-mono {
     font-family: 'JetBrains Mono', monospace;
   }
 
-  /* Custom scrollbar */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
-    background: hsl(var(--muted));
-    border-radius: 4px;
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
     background: hsl(var(--border));
-    border-radius: 4px;
+    border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
@@ -118,24 +122,23 @@
 }
 
 @layer components {
-  /* Topographic background pattern */
-  .bg-topographic {
-    background-color: hsl(var(--background));
-    background-image: 
-      repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 40px,
-        hsl(var(--grid-line) / 0.3) 40px,
-        hsl(var(--grid-line) / 0.3) 41px
-      ),
-      repeating-linear-gradient(
-        90deg,
-        transparent,
-        transparent 40px,
-        hsl(var(--grid-line) / 0.3) 40px,
-        hsl(var(--grid-line) / 0.3) 41px
-      );
+  /* Glassmorphism panel */
+  .glass-panel {
+    background: hsl(var(--glass-bg));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid hsl(var(--glass-border));
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* Floating controls */
+  .floating-control {
+    @apply glass-panel rounded-lg p-3 transition-all duration-200;
+  }
+
+  .floating-control:hover {
+    background: hsl(222 47% 10% / 0.9);
+    border-color: hsl(var(--border));
   }
 
   /* Beacon marker pulse animation */
@@ -148,7 +151,7 @@
       box-shadow: 0 0 0 0 hsl(var(--beacon) / 0.7);
     }
     50% {
-      box-shadow: 0 0 0 8px hsl(var(--beacon) / 0);
+      box-shadow: 0 0 0 10px hsl(var(--beacon) / 0);
     }
   }
 
@@ -160,12 +163,6 @@
   .plot-hover:hover {
     filter: brightness(1.2);
     box-shadow: var(--shadow-glow);
-  }
-
-  /* Data grid lines */
-  .data-grid {
-    background-image: linear-gradient(hsl(var(--border) / 0.5) 1px, transparent 1px);
-    background-size: 100% 2.5rem;
   }
 
   /* Coordinate display */
@@ -187,18 +184,6 @@
   .status-completed {
     @apply text-success-foreground;
     background: hsl(var(--success));
-  }
-
-  /* Glass effect for overlays */
-  .glass {
-    background: hsl(var(--card) / 0.8);
-    backdrop-filter: blur(12px);
-    border: 1px solid hsl(var(--border) / 0.5);
-  }
-
-  /* Map controls styling */
-  .map-control {
-    @apply glass rounded-lg p-2 shadow-lg;
   }
 
   /* Gradient text */
@@ -227,7 +212,7 @@
   }
 
   .card-glow:hover::before {
-    opacity: 0.5;
+    opacity: 0.4;
   }
 
   /* Loading skeleton shimmer */
@@ -243,12 +228,8 @@
   }
 
   @keyframes shimmer {
-    0% {
-      background-position: 200% 0;
-    }
-    100% {
-      background-position: -200% 0;
-    }
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 
   /* Fade in animation */
@@ -257,14 +238,8 @@
   }
 
   @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   /* Slide in from right */
@@ -273,14 +248,51 @@
   }
 
   @keyframes slideInRight {
-    from {
-      opacity: 0;
-      transform: translateX(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Processing animation */
+  .processing-pulse {
+    animation: processingPulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes processingPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  /* Engineering grid pattern */
+  .bg-engineering-grid {
+    background-color: hsl(var(--background));
+    background-image: 
+      linear-gradient(hsl(var(--grid-line) / 0.15) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--grid-line) / 0.15) 1px, transparent 1px);
+    background-size: 50px 50px;
+  }
+
+  /* Tool button */
+  .tool-btn {
+    @apply glass-panel p-3 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer;
+    border: 1px solid transparent;
+  }
+
+  .tool-btn:hover {
+    @apply border-primary/50;
+    box-shadow: 0 0 15px hsl(var(--primary) / 0.2);
+  }
+
+  .tool-btn.active {
+    @apply border-primary bg-primary/20;
+  }
+
+  /* Chat bubble */
+  .chat-bubble-user {
+    @apply bg-primary text-primary-foreground rounded-2xl rounded-br-md px-4 py-2;
+  }
+
+  .chat-bubble-ai {
+    @apply glass-panel rounded-2xl rounded-bl-md px-4 py-2;
   }
 }
 
@@ -289,7 +301,6 @@
     text-wrap: balance;
   }
 
-  /* Transition utilities */
   .transition-smooth {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -299,7 +310,7 @@
 .leaflet-container {
   width: 100%;
   height: 100%;
-  background: hsl(var(--survey-dark));
+  background: hsl(var(--background));
   font-family: inherit;
 }
 
@@ -307,7 +318,8 @@
   background: hsl(var(--card));
   color: hsl(var(--card-foreground));
   border-radius: var(--radius);
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid hsl(var(--border));
 }
 
 .leaflet-popup-tip {
@@ -316,25 +328,69 @@
 
 .leaflet-popup-content {
   margin: 12px 16px;
+  font-size: 14px;
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: var(--shadow-md) !important;
 }
 
 .leaflet-control-zoom a {
   background: hsl(var(--card)) !important;
   color: hsl(var(--card-foreground)) !important;
   border: 1px solid hsl(var(--border)) !important;
+  width: 36px !important;
+  height: 36px !important;
+  line-height: 36px !important;
+  font-size: 18px !important;
 }
 
 .leaflet-control-zoom a:hover {
   background: hsl(var(--secondary)) !important;
 }
 
+.leaflet-control-zoom-in {
+  border-radius: var(--radius) var(--radius) 0 0 !important;
+}
+
+.leaflet-control-zoom-out {
+  border-radius: 0 0 var(--radius) var(--radius) !important;
+}
+
 .leaflet-control-attribution {
   background: hsl(var(--background) / 0.8) !important;
   color: hsl(var(--muted-foreground)) !important;
   font-size: 10px;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
 }
 
 .beacon-marker, .plot-beacon-marker {
   background: transparent !important;
   border: none !important;
+}
+
+/* Hazard zone styling */
+.hazard-zone {
+  fill: hsl(var(--hazard));
+  fill-opacity: 0.35;
+  stroke: hsl(var(--hazard));
+  stroke-width: 2;
+  stroke-dasharray: 8, 4;
+}
+
+/* Plot grid styling */
+.plot-grid {
+  fill: hsl(var(--plot-primary));
+  fill-opacity: 0.3;
+  stroke: hsl(var(--plot-primary));
+  stroke-width: 1.5;
+}
+
+.plot-commercial {
+  fill: hsl(var(--commercial));
+  fill-opacity: 0.3;
+  stroke: hsl(var(--commercial));
+  stroke-width: 1.5;
 }
