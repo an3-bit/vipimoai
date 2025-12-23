@@ -98,25 +98,139 @@ export function formatCoordinatePair(coord: Coordinate, precision: number = 6): 
 // Alias for calculatePolygonArea for convenience
 export const calculateArea = calculatePolygonArea;
 
-// Parse CSV coordinates (format: "lat,lng" per line or "lat,lng;lat,lng...")
+// Parse coordinates from various formats (CSV, TSV, total station exports)
 export function parseCSVCoordinates(csvText: string): Coordinate[] {
   const coordinates: Coordinate[] = [];
   
-  // Handle both newline and semicolon separators
-  const lines = csvText.split(/[\n;]/).filter(line => line.trim());
+  // Handle various line separators
+  const lines = csvText.split(/[\n\r;]+/).filter(line => line.trim());
   
-  for (const line of lines) {
-    const parts = line.split(',').map(p => p.trim());
+  // Skip header row if detected
+  const firstLine = lines[0]?.toLowerCase() || '';
+  const hasHeader = firstLine.includes('lat') || firstLine.includes('north') || 
+                    firstLine.includes('easting') || firstLine.includes('point') ||
+                    firstLine.includes('x') || firstLine.includes('y');
+  
+  const startIndex = hasHeader ? 1 : 0;
+  
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    
+    // Handle multiple delimiters: comma, tab, semicolon, space
+    const parts = line.split(/[,\t\s]+/).map(p => p.trim()).filter(p => p);
+    
     if (parts.length >= 2) {
-      const lat = parseFloat(parts[0]);
-      const lng = parseFloat(parts[1]);
-      if (!isNaN(lat) && !isNaN(lng)) {
-        coordinates.push({ lat, lng });
+      // Try different column arrangements
+      // Format 1: lat, lng (WGS84)
+      // Format 2: point_id, lat, lng
+      // Format 3: point_id, easting, northing (UTM - needs conversion hint)
+      // Format 4: easting, northing (UTM)
+      
+      let lat: number | null = null;
+      let lng: number | null = null;
+      
+      // Check if first column is a point ID (non-numeric or integer)
+      const firstIsId = isNaN(parseFloat(parts[0])) || 
+                        (Number.isInteger(parseFloat(parts[0])) && parts.length > 2);
+      
+      const numericParts = firstIsId ? parts.slice(1) : parts;
+      
+      if (numericParts.length >= 2) {
+        const val1 = parseFloat(numericParts[0]);
+        const val2 = parseFloat(numericParts[1]);
+        
+        if (!isNaN(val1) && !isNaN(val2)) {
+          // Determine if values are lat/lng or UTM based on magnitude
+          // Lat: -90 to 90, Lng: -180 to 180
+          // UTM Easting: typically 100,000 to 900,000
+          // UTM Northing: typically 0 to 10,000,000
+          
+          if (Math.abs(val1) <= 90 && Math.abs(val2) <= 180) {
+            // Likely lat, lng
+            lat = val1;
+            lng = val2;
+          } else if (Math.abs(val2) <= 90 && Math.abs(val1) <= 180) {
+            // Likely lng, lat (some systems use this order)
+            lat = val2;
+            lng = val1;
+          } else if (val1 > 100000 && val2 > 100000) {
+            // Likely UTM coordinates - store as-is and flag for conversion
+            // For now, we'll try to detect Kenya's UTM zone (36N/37N)
+            // This is a simplified conversion - full solution would need zone info
+            lat = val2;
+            lng = val1;
+            console.warn('Large coordinates detected - may need UTM conversion');
+          }
+          
+          if (lat !== null && lng !== null) {
+            coordinates.push({ lat, lng });
+          }
+        }
       }
     }
   }
   
   return coordinates;
+}
+
+// Parse GeoJSON format
+export function parseGeoJSON(jsonText: string): Coordinate[] {
+  try {
+    const geojson = JSON.parse(jsonText);
+    const coordinates: Coordinate[] = [];
+    
+    const extractCoords = (geometry: any) => {
+      if (!geometry) return;
+      
+      if (geometry.type === 'Point') {
+        coordinates.push({ lat: geometry.coordinates[1], lng: geometry.coordinates[0] });
+      } else if (geometry.type === 'Polygon') {
+        // Take the outer ring
+        const ring = geometry.coordinates[0];
+        for (const coord of ring) {
+          coordinates.push({ lat: coord[1], lng: coord[0] });
+        }
+      } else if (geometry.type === 'MultiPolygon') {
+        // Take first polygon's outer ring
+        const ring = geometry.coordinates[0][0];
+        for (const coord of ring) {
+          coordinates.push({ lat: coord[1], lng: coord[0] });
+        }
+      } else if (geometry.type === 'LineString') {
+        for (const coord of geometry.coordinates) {
+          coordinates.push({ lat: coord[1], lng: coord[0] });
+        }
+      }
+    };
+    
+    if (geojson.type === 'FeatureCollection') {
+      for (const feature of geojson.features) {
+        extractCoords(feature.geometry);
+      }
+    } else if (geojson.type === 'Feature') {
+      extractCoords(geojson.geometry);
+    } else {
+      extractCoords(geojson);
+    }
+    
+    return coordinates;
+  } catch {
+    throw new Error('Invalid GeoJSON format');
+  }
+}
+
+// Main parser that detects format automatically
+export function parseCoordinateFile(text: string, fileName?: string): Coordinate[] {
+  const trimmed = text.trim();
+  
+  // Detect JSON/GeoJSON
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return parseGeoJSON(trimmed);
+  }
+  
+  // Default to CSV/text parsing
+  return parseCSVCoordinates(trimmed);
 }
 
 // Generate sample parcel for demo

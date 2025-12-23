@@ -480,67 +480,83 @@ export default function Index() {
 
       {/* New Project Dialog */}
       <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto glass-panel border-border/50">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-xl">Create New Survey Project</DialogTitle>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <Plus className="h-5 w-5 text-primary" />
+              Create New Survey Project
+            </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleCreateProject} className="space-y-4 mt-4">
-            <div className="grid grid-cols-2 gap-4">
+          <form onSubmit={handleCreateProject} className="space-y-5 mt-4">
+            <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Project Name</Label>
+                <Label htmlFor="name">Project Name *</Label>
                 <Input
                   id="name"
                   placeholder="e.g., Juja Farm Block 5"
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
                   required
-                  className="bg-secondary/50"
+                  autoFocus
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="client">Client Name</Label>
-                <Input
-                  id="client"
-                  placeholder="e.g., ABC Developers Ltd"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  className="bg-secondary/50"
-                />
+              
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="client">Client Name</Label>
+                  <Input
+                    id="client"
+                    placeholder="e.g., ABC Developers"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="location">Location</Label>
+                  <Input
+                    id="location"
+                    placeholder="e.g., Juja, Kiambu"
+                    value={locationName}
+                    onChange={(e) => setLocationName(e.target.value)}
+                  />
+                </div>
               </div>
             </div>
             
-            <div className="space-y-2">
-              <Label htmlFor="location">Location</Label>
-              <Input
-                id="location"
-                placeholder="e.g., Juja, Kiambu County"
-                value={locationName}
-                onChange={(e) => setLocationName(e.target.value)}
-                className="bg-secondary/50"
-              />
-            </div>
-            
-            <div className="pt-2">
+            <div className="border-t border-border pt-4">
               <ParcelUpload onCoordinatesLoaded={handleCoordinatesLoaded} />
             </div>
 
-            <Button 
-              type="submit" 
-              className="w-full" 
-              disabled={createProject.isPending || createParcel.isPending || !parcelCoordinates}
-            >
-              {createProject.isPending || createParcel.isPending 
-                ? (
+            <div className="flex gap-3 pt-2">
+              <Button 
+                type="button" 
+                variant="outline" 
+                onClick={() => setNewProjectOpen(false)}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button 
+                type="submit" 
+                className="flex-1" 
+                disabled={createProject.isPending || createParcel.isPending || !parcelCoordinates || !projectName.trim()}
+              >
+                {createProject.isPending || createParcel.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Saving...
+                    Creating...
                   </>
-                )
-                : !parcelCoordinates 
-                  ? 'Upload coordinates to continue'
-                  : 'Create Project & Open Workspace'
-              }
-            </Button>
+                ) : (
+                  'Create Project'
+                )}
+              </Button>
+            </div>
+            
+            {!parcelCoordinates && (
+              <p className="text-xs text-center text-muted-foreground">
+                Upload parcel coordinates to create project
+              </p>
+            )}
           </form>
         </DialogContent>
       </Dialog>
