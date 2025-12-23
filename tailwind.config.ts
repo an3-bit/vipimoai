@@ -59,6 +59,9 @@ export default {
           DEFAULT: "hsl(var(--warning))",
           foreground: "hsl(var(--warning-foreground))",
         },
+        hazard: {
+          DEFAULT: "hsl(var(--hazard))",
+        },
         survey: {
           plot: "hsl(var(--plot-primary))",
           "plot-secondary": "hsl(var(--plot-secondary))",
@@ -66,6 +69,7 @@ export default {
           beacon: "hsl(var(--beacon))",
           boundary: "hsl(var(--parcel-boundary))",
           grid: "hsl(var(--grid-line))",
+          commercial: "hsl(var(--commercial))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",

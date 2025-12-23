@@ -15,8 +15,7 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // Workaround for react-leaflet module resolution issues
   optimizeDeps: {
-    include: ["react", "react-dom"],
+    include: ["react", "react-dom", "react-dom/client"],
   },
 }));
