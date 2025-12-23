@@ -114,8 +114,8 @@ export default function Dashboard() {
                 <MapPin className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <h1 className="font-semibold text-lg">SurveyAI Pro</h1>
-                <p className="text-xs text-muted-foreground">Land Subdivision</p>
+                <h1 className="font-semibold text-lg">VipimoAI</h1>
+                <p className="text-xs text-muted-foreground">Land Surveyor's Co-Pilot</p>
               </div>
             </div>
           </div>
