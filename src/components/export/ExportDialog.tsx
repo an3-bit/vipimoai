@@ -162,15 +162,15 @@ export function ExportDialog({
           {/* Summary */}
           <div className="grid grid-cols-3 gap-4 p-3 rounded-lg bg-muted/50 text-center">
             <div>
-              <p className="text-lg font-bold text-primary">{plots.length}</p>
+              <p className="text-lg font-bold text-survey-primary">{plots.length}</p>
               <p className="text-xs text-muted-foreground">Plots</p>
             </div>
             <div>
-              <p className="text-lg font-bold text-primary">{beacons.length}</p>
+              <p className="text-lg font-bold text-survey-beacon">{beacons.length}</p>
               <p className="text-xs text-muted-foreground">Beacons</p>
             </div>
             <div>
-              <p className="text-lg font-bold text-primary">{parcelCoordinates.length}</p>
+              <p className="text-lg font-bold text-survey-accent">{parcelCoordinates.length}</p>
               <p className="text-xs text-muted-foreground">Vertices</p>
             </div>
           </div>
@@ -180,13 +180,13 @@ export function ExportDialog({
           {/* Format Selection */}
           <div className="space-y-3">
             {formats.map(format => (
-                <div
+              <div
                 key={format.id}
                 className={`
                   flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors
                   ${selectedFormats.includes(format.id)
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-primary/50'
+                    ? 'border-survey-primary bg-survey-primary/5'
+                    : 'border-border hover:border-survey-primary/50'
                   }
                 `}
                 onClick={() => !exporting && toggleFormat(format.id)}
@@ -201,7 +201,7 @@ export function ExportDialog({
                     {format.icon}
                     <Label className="font-medium cursor-pointer">{format.label}</Label>
                     {completed.includes(format.id) && (
-                      <Check className="h-4 w-4 text-success" />
+                      <Check className="h-4 w-4 text-survey-success" />
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
