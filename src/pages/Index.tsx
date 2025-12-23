@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, MapPin, LogOut, Clock, CheckCircle, FileText, 
-  ChevronLeft, ChevronRight, Map, Layers, LandPlot, Loader2, AlertCircle
+  ChevronLeft, ChevronRight, Map, Layers, LandPlot, Loader2, AlertCircle, User
 } from 'lucide-react';
 import { ParcelUpload } from '@/components/map/ParcelUpload';
 import { Coordinate } from '@/types/survey';
@@ -413,14 +413,21 @@ export default function Index() {
             <div className="p-4 border-t border-border/50">
               {user ? (
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => navigate('/profile')}
+                    className="flex items-center gap-2 w-full hover:bg-secondary/50 p-2 rounded-lg transition-colors"
+                  >
                     <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
                       <span className="text-xs font-medium text-primary">
                         {user.email?.charAt(0).toUpperCase()}
                       </span>
                     </div>
-                    <p className="text-sm truncate flex-1">{user.email}</p>
-                  </div>
+                    <div className="flex-1 text-left">
+                      <p className="text-sm truncate">{user.email}</p>
+                      <p className="text-xs text-muted-foreground">View Profile</p>
+                    </div>
+                    <User className="h-4 w-4 text-muted-foreground" />
+                  </button>
                   <Button 
                     variant="ghost" 
                     size="sm" 
