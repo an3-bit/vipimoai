@@ -11,7 +11,16 @@ export function useProjects() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('projects')
-        .select('*')
+        .select(`
+          *,
+          parcels (
+            *,
+            subdivisions (
+              *,
+              plots (*)
+            )
+          )
+        `)
         .order('created_at', { ascending: false });
 
       if (error) throw error;

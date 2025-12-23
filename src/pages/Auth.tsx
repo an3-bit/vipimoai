@@ -24,12 +24,12 @@ export default function Auth() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         toast.success('Welcome back!');
-        navigate('/dashboard');
+        navigate('/');
       } else {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         toast.success('Account created! You can now sign in.');
-        navigate('/dashboard');
+        navigate('/');
       }
     } catch (error: any) {
       toast.error(error.message);
