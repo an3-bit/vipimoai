@@ -191,6 +191,39 @@ export type Database = {
           },
         ]
       }
+      profiles: {
+        Row: {
+          company_address: string | null
+          company_name: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          license_number: string | null
+          phone_number: string | null
+          updated_at: string
+        }
+        Insert: {
+          company_address?: string | null
+          company_name?: string | null
+          created_at?: string
+          full_name?: string | null
+          id: string
+          license_number?: string | null
+          phone_number?: string | null
+          updated_at?: string
+        }
+        Update: {
+          company_address?: string | null
+          company_name?: string | null
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          license_number?: string | null
+          phone_number?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       projects: {
         Row: {
           client_email: string | null
