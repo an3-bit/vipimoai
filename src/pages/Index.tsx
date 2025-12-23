@@ -11,12 +11,12 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
-  Plus, MapPin, FolderOpen, LogOut, Clock, CheckCircle, FileText, 
-  ChevronLeft, ChevronRight, Map, Layers, LandPlot
+  Plus, MapPin, LogOut, Clock, CheckCircle, FileText, 
+  ChevronLeft, ChevronRight, Map, Layers, LandPlot, Loader2, AlertCircle
 } from 'lucide-react';
-import { mockProjects } from '@/data/mockData';
 import { ParcelUpload } from '@/components/map/ParcelUpload';
 import { Coordinate } from '@/types/survey';
+import { toast } from 'sonner';
 
 // Fix Leaflet default marker icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -32,6 +32,7 @@ const createProjectIcon = (status: string) => {
     draft: '#6b7280',
     in_progress: '#f59e0b',
     completed: '#10b981',
+    archived: '#64748b',
   };
   const color = colors[status as keyof typeof colors] || colors.draft;
   
@@ -62,13 +63,16 @@ const createProjectIcon = (status: string) => {
 };
 
 // Map bounds adjuster
-function MapBoundsAdjuster({ projects }: { projects: typeof mockProjects }) {
+function MapBoundsAdjuster({ projects }: { projects: any[] }) {
   const map = useMap();
   
   useEffect(() => {
     if (projects.length > 0) {
-      const bounds = L.latLngBounds(projects.map(p => [p.lat, p.lng]));
-      map.fitBounds(bounds, { padding: [80, 80], maxZoom: 11 });
+      const validProjects = projects.filter(p => p.lat && p.lng);
+      if (validProjects.length > 0) {
+        const bounds = L.latLngBounds(validProjects.map(p => [p.lat, p.lng]));
+        map.fitBounds(bounds, { padding: [80, 80], maxZoom: 11 });
+      }
     }
   }, [projects, map]);
   
@@ -82,15 +86,49 @@ export default function Index() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [clientName, setClientName] = useState('');
+  const [locationName, setLocationName] = useState('');
   const [parcelCoordinates, setParcelCoordinates] = useState<Coordinate[] | null>(null);
   const [mapLayer, setMapLayer] = useState<'standard' | 'satellite'>('standard');
 
-  const { data: dbProjects } = useProjects();
+  const { data: dbProjects, isLoading, error, isFetching } = useProjects();
   const createProject = useCreateProject();
   const createParcel = useCreateParcel();
 
-  // Combine mock data with real projects for demo
-  const allProjects = mockProjects;
+  // Transform DB projects to display format with coordinates
+  const allProjects = (dbProjects || []).map((project: any) => {
+    // Try to get coordinates from first parcel's centroid
+    const parcel = project.parcels?.[0];
+    let lat = -1.115; // Default to Juja
+    let lng = 37.117;
+    let acres = 0;
+    let plots = 0;
+
+    if (parcel?.centroid) {
+      lat = parcel.centroid.lat || parcel.centroid[0] || lat;
+      lng = parcel.centroid.lng || parcel.centroid[1] || lng;
+      acres = parcel.area_sqm ? Number((parcel.area_sqm / 4046.86).toFixed(1)) : 0;
+    }
+
+    // Count plots
+    if (parcel?.subdivisions) {
+      parcel.subdivisions.forEach((sub: any) => {
+        plots += sub.plots?.length || 0;
+      });
+    }
+
+    return {
+      id: project.id,
+      name: project.name,
+      client_name: project.client_name || 'No client',
+      location_name: project.location_name || 'Kenya',
+      status: project.status,
+      lat,
+      lng,
+      acres: Number(acres),
+      plots,
+      total_area_ha: project.total_area_ha || 0,
+    };
+  });
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -98,26 +136,57 @@ export default function Index() {
     });
   }, []);
 
+  // Show sync error toast
+  useEffect(() => {
+    if (error) {
+      toast.error('Sync Error: Failed to load projects. Check your connection.');
+    }
+  }, [error]);
+
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!projectName.trim() || !parcelCoordinates || parcelCoordinates.length < 3) return;
 
-    const project = await createProject.mutateAsync({
-      name: projectName,
-      client_name: clientName || undefined,
-    });
+    try {
+      // Calculate area from coordinates
+      const areaHa = calculateAreaFromCoords(parcelCoordinates);
 
-    await createParcel.mutateAsync({
-      projectId: project.id,
-      name: 'Main Parcel',
-      coordinates: parcelCoordinates,
-    });
+      const project = await createProject.mutateAsync({
+        name: projectName,
+        client_name: clientName || undefined,
+        location_name: locationName || undefined,
+        total_area_ha: areaHa,
+      });
 
-    setNewProjectOpen(false);
-    setProjectName('');
-    setClientName('');
-    setParcelCoordinates(null);
-    navigate(`/project/${project.id}`);
+      await createParcel.mutateAsync({
+        projectId: project.id,
+        name: 'Main Parcel',
+        coordinates: parcelCoordinates,
+      });
+
+      setNewProjectOpen(false);
+      setProjectName('');
+      setClientName('');
+      setLocationName('');
+      setParcelCoordinates(null);
+      navigate(`/workspace/${project.id}`);
+    } catch (err) {
+      // Error is already handled by the mutation
+    }
+  };
+
+  // Simple area calculation
+  const calculateAreaFromCoords = (coords: Coordinate[]): number => {
+    if (coords.length < 3) return 0;
+    let area = 0;
+    for (let i = 0; i < coords.length; i++) {
+      const j = (i + 1) % coords.length;
+      area += coords[i].lng * coords[j].lat;
+      area -= coords[j].lng * coords[i].lat;
+    }
+    area = Math.abs(area) / 2;
+    // Convert to hectares (rough approximation)
+    return area * 111000 * 111000 * Math.cos(coords[0].lat * Math.PI / 180) / 10000;
   };
 
   const handleCoordinatesLoaded = (coordinates: Coordinate[]) => {
@@ -136,6 +205,7 @@ export default function Index() {
     draft: 'text-muted-foreground',
     in_progress: 'text-warning',
     completed: 'text-success',
+    archived: 'text-muted-foreground',
   };
 
   return (
@@ -185,6 +255,26 @@ export default function Index() {
         ))}
       </MapContainer>
 
+      {/* Syncing Indicator */}
+      {isFetching && (
+        <div className="absolute top-4 right-20 z-[1000]">
+          <div className="glass-panel rounded-lg px-3 py-2 flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="text-xs">Syncing...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Error Indicator */}
+      {error && (
+        <div className="absolute top-4 right-20 z-[1000]">
+          <div className="glass-panel rounded-lg px-3 py-2 flex items-center gap-2 border-destructive/50">
+            <AlertCircle className="h-4 w-4 text-destructive" />
+            <span className="text-xs text-destructive">Sync Error</span>
+          </div>
+        </div>
+      )}
+
       {/* Top Metrics Card */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000]">
         <div className="glass-panel rounded-xl px-6 py-3 flex items-center gap-8">
@@ -193,7 +283,7 @@ export default function Index() {
               <LandPlot className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-gradient">{totalAcres}</p>
+              <p className="text-2xl font-bold text-gradient">{totalAcres.toFixed(1)}</p>
               <p className="text-xs text-muted-foreground">Total Acres Surveyed</p>
             </div>
           </div>
@@ -254,7 +344,7 @@ export default function Index() {
               <div className="p-4">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                    Recent Projects
+                    {isLoading ? 'Loading...' : `Projects (${allProjects.length})`}
                   </h2>
                   <Button 
                     size="sm" 
@@ -265,40 +355,57 @@ export default function Index() {
                   </Button>
                 </div>
 
-                <div className="space-y-2">
-                  {allProjects.map((project) => (
-                    <button
-                      key={project.id}
-                      onClick={() => navigate(`/workspace/${project.id}`)}
-                      className="w-full text-left p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors group"
+                {isLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  </div>
+                ) : allProjects.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-muted-foreground text-sm mb-4">No projects yet</p>
+                    <Button 
+                      size="sm"
+                      onClick={() => user ? setNewProjectOpen(true) : navigate('/auth')}
                     >
-                      <div className="flex items-start gap-3">
-                        <div className={`mt-1 ${statusColors[project.status]}`}>
-                          {project.status === 'completed' ? (
-                            <CheckCircle className="h-4 w-4" />
-                          ) : project.status === 'in_progress' ? (
-                            <Clock className="h-4 w-4" />
-                          ) : (
-                            <FileText className="h-4 w-4" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate group-hover:text-primary transition-colors">
-                            {project.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {project.client_name}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                            <span>{project.acres} ac</span>
-                            <span>•</span>
-                            <span>{project.plots} plots</span>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create First Project
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {allProjects.map((project) => (
+                      <button
+                        key={project.id}
+                        onClick={() => navigate(`/workspace/${project.id}`)}
+                        className="w-full text-left p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors group"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`mt-1 ${statusColors[project.status as keyof typeof statusColors]}`}>
+                            {project.status === 'completed' ? (
+                              <CheckCircle className="h-4 w-4" />
+                            ) : project.status === 'in_progress' ? (
+                              <Clock className="h-4 w-4" />
+                            ) : (
+                              <FileText className="h-4 w-4" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate group-hover:text-primary transition-colors">
+                              {project.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {project.client_name}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                              <span>{project.acres} ac</span>
+                              <span>•</span>
+                              <span>{project.plots} plots</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </ScrollArea>
 
@@ -395,6 +502,17 @@ export default function Index() {
               </div>
             </div>
             
+            <div className="space-y-2">
+              <Label htmlFor="location">Location</Label>
+              <Input
+                id="location"
+                placeholder="e.g., Juja, Kiambu County"
+                value={locationName}
+                onChange={(e) => setLocationName(e.target.value)}
+                className="bg-secondary/50"
+              />
+            </div>
+            
             <div className="pt-2">
               <ParcelUpload onCoordinatesLoaded={handleCoordinatesLoaded} />
             </div>
@@ -405,7 +523,12 @@ export default function Index() {
               disabled={createProject.isPending || createParcel.isPending || !parcelCoordinates}
             >
               {createProject.isPending || createParcel.isPending 
-                ? 'Creating...' 
+                ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                )
                 : !parcelCoordinates 
                   ? 'Upload coordinates to continue'
                   : 'Create Project & Open Workspace'

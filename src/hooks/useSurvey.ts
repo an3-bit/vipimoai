@@ -115,7 +115,7 @@ export function useUpdateProject() {
       projectId: string; 
       updates: { 
         name?: string; 
-        status?: string; 
+        status?: 'draft' | 'in_progress' | 'completed' | 'archived'; 
         location_name?: string; 
         total_area_ha?: number;
       } 
@@ -198,12 +198,12 @@ export function useCreatePlots() {
         coordinates: plot.coordinates as unknown as any,
         area_sqm: plot.area_sqm,
         status: plot.status || 'valid',
-        // subdivision_id is nullable now, we're using direct project link
+        subdivision_id: null as any, // Now nullable
       }));
 
       const { data, error } = await supabase
         .from('plots')
-        .insert(plotsToInsert)
+        .insert(plotsToInsert as any)
         .select();
 
       if (error) throw error;
