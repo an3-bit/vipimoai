@@ -243,6 +243,40 @@ export function useDeleteProjectPlots() {
   });
 }
 
+// Update single plot status
+export function useUpdatePlotStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ 
+      plotId, 
+      status,
+      projectId,
+    }: { 
+      plotId: string; 
+      status: 'available' | 'reserved' | 'sold';
+      projectId: string;
+    }) => {
+      const { data, error } = await supabase
+        .from('plots')
+        .update({ status })
+        .eq('id', plotId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['plots', variables.projectId] });
+      toast.success(`Plot marked as ${variables.status}`);
+    },
+    onError: (error) => {
+      toast.error('Failed to update plot status: ' + error.message);
+    },
+  });
+}
+
 export function useAISubdivision() {
   return useMutation({
     mutationFn: async ({ 
