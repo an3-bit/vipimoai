@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { MapPin, ArrowLeft } from 'lucide-react';
+import { MapPin, ArrowLeft, Loader2, Shield } from 'lucide-react';
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -14,6 +14,8 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [licenseNumber, setLicenseNumber] = useState('');
 
   // Check if already authenticated
   useEffect(() => {
@@ -43,16 +45,43 @@ export default function Auth() {
         toast.success('Welcome back!');
         navigate('/');
       } else {
+        // Validate license number format for signup
+        if (!licenseNumber.trim()) {
+          throw new Error('License number is required for surveyors');
+        }
+        if (!fullName.trim()) {
+          throw new Error('Full name is required');
+        }
+
         const redirectUrl = `${window.location.origin}/`;
-        const { error } = await supabase.auth.signUp({ 
+        const { data, error } = await supabase.auth.signUp({ 
           email, 
           password,
           options: {
-            emailRedirectTo: redirectUrl
+            emailRedirectTo: redirectUrl,
+            data: {
+              full_name: fullName,
+            }
           }
         });
         if (error) throw error;
-        toast.success('Account created! You can now sign in.');
+
+        // Update profile with license number after signup
+        if (data.user) {
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .update({ 
+              full_name: fullName,
+              license_number: licenseNumber 
+            })
+            .eq('id', data.user.id);
+          
+          if (profileError) {
+            console.error('Profile update error:', profileError);
+          }
+        }
+
+        toast.success('Account created! Welcome to VipimoAI.');
         navigate('/');
       }
     } catch (error: any) {
@@ -80,16 +109,49 @@ export default function Auth() {
               <MapPin className="h-7 w-7 text-primary" />
             </div>
             <CardTitle className="text-2xl text-gradient">
-              {isLogin ? 'Welcome Back' : 'Create Account'}
+              {isLogin ? 'Welcome Back' : 'Register as Surveyor'}
             </CardTitle>
             <CardDescription>
               {isLogin 
                 ? 'Sign in to access your survey projects' 
-                : 'Start your professional surveying workflow'}
+                : 'Create your professional surveyor account'}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+              {!isLogin && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="fullName">Full Name *</Label>
+                    <Input
+                      id="fullName"
+                      type="text"
+                      placeholder="e.g., John Mwangi"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      required={!isLogin}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="licenseNumber" className="flex items-center gap-2">
+                      <Shield className="h-4 w-4 text-primary" />
+                      Surveyor License Number *
+                    </Label>
+                    <Input
+                      id="licenseNumber"
+                      type="text"
+                      placeholder="e.g., LSK/2025/001 or LS/2019/0234"
+                      value={licenseNumber}
+                      onChange={(e) => setLicenseNumber(e.target.value)}
+                      required={!isLogin}
+                      className="font-mono"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      This will appear on all your Mutation Forms
+                    </p>
+                  </div>
+                </>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -114,7 +176,12 @@ export default function Auth() {
                 />
               </div>
               <Button type="submit" variant="survey" className="w-full" disabled={loading}>
-                {loading ? 'Processing...' : isLogin ? 'Sign In' : 'Create Account'}
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : isLogin ? 'Sign In' : 'Create Surveyor Account'}
               </Button>
             </form>
 
@@ -127,7 +194,7 @@ export default function Auth() {
                 onClick={() => setIsLogin(!isLogin)}
                 className="text-primary hover:underline font-medium"
               >
-                {isLogin ? 'Sign up' : 'Sign in'}
+                {isLogin ? 'Register as Surveyor' : 'Sign in'}
               </button>
             </div>
           </CardContent>

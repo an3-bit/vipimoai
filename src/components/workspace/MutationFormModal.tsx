@@ -2,9 +2,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Download, FileJson, Send, CheckCircle, FileOutput, Loader2, AlertTriangle } from 'lucide-react';
+import { Download, FileJson, Send, CheckCircle, FileOutput, Loader2, AlertTriangle, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { useProjectPlots } from '@/hooks/useSurvey';
+import { useProfile } from '@/hooks/useProfile';
 import { sqmToHectares } from '@/lib/geometry';
 import { generateArdhisasaJSON, generatePDF, downloadFile } from '@/lib/exports';
 
@@ -25,6 +26,8 @@ export function MutationFormModal({
   clientName,
   parcelAreaSqm = 0,
 }: MutationFormModalProps) {
+  // Fetch surveyor profile for dynamic header
+  const { data: profile } = useProfile();
   // Fetch real plot data from Supabase
   const { data: plots, isLoading } = useProjectPlots(projectId);
 
@@ -180,8 +183,12 @@ export function MutationFormModal({
                       <p className="font-mono font-semibold">FR/{projectName.split(' ')[0]?.toUpperCase()}/2024/0456</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground uppercase">Licensed Surveyor</p>
-                      <p className="font-semibold">LS/2019/0234</p>
+                      <p className="text-xs text-muted-foreground uppercase flex items-center gap-1">
+                        <User className="h-3 w-3" />
+                        Licensed Surveyor
+                      </p>
+                      <p className="font-semibold">{profile?.full_name || 'Not Set'}</p>
+                      <p className="font-mono text-sm text-primary">{profile?.license_number || 'License Not Set'}</p>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground uppercase">Application Date</p>
