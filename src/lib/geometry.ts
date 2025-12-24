@@ -67,14 +67,25 @@ export function calculateCentroid(coordinates: Coordinate[]): Coordinate {
   };
 }
 
-// Format area for display
+// Format area for display - ARDHISASA STANDARD: Always show in Hectares with 4 decimal places
 export function formatArea(areaSqm: number): string {
+  const hectares = areaSqm / 10000;
+  return `${hectares.toFixed(4)} Ha`;
+}
+
+// Legacy format for non-official displays
+export function formatAreaLegacy(areaSqm: number): string {
   if (areaSqm >= 10000) {
     return `${(areaSqm / 10000).toFixed(2)} ha`;
   } else if (areaSqm >= 1) {
     return `${areaSqm.toFixed(1)} m²`;
   }
   return `${(areaSqm * 10000).toFixed(0)} cm²`;
+}
+
+// Convert sqm to hectares
+export function sqmToHectares(areaSqm: number): number {
+  return areaSqm / 10000;
 }
 
 // Format distance for display
