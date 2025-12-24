@@ -8,6 +8,7 @@ import { useProject, useProjectPlots, useCreatePlots, useDeleteProjectPlots, use
 import { useRiparianBuffer } from '@/hooks/useRiparianBuffer';
 import { RiverDrawingTool } from '@/components/map/RiverDrawingTool';
 import { PlotStatusCard, PlotStatus } from '@/components/workspace/PlotStatusCard';
+import { ProjectCompletionModal } from '@/components/workspace/ProjectCompletionModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -91,6 +92,9 @@ export default function Workspace() {
   
   // Mutation modal
   const [mutationModalOpen, setMutationModalOpen] = useState(false);
+  const [completionModalOpen, setCompletionModalOpen] = useState(false);
+  const [hasExported, setHasExported] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   
   // Generated data
   const [plotGrid, setPlotGrid] = useState<GeneratedPlot[]>([]);
@@ -795,8 +799,21 @@ export default function Workspace() {
           <button 
             className="tool-btn"
             title="Export Data"
+            onClick={() => setHasExported(true)}
           >
             <Download className="h-5 w-5" />
+          </button>
+          
+          <div className="w-px h-8 bg-border mx-1" />
+          
+          {/* Complete Project */}
+          <button 
+            className={`tool-btn ${project?.status === 'completed' ? 'text-success' : 'hover:text-success'}`}
+            onClick={() => setCompletionModalOpen(true)}
+            title={project?.status === 'completed' ? 'Project Completed' : 'Complete Project'}
+            disabled={plotCount === 0}
+          >
+            <CheckCircle className="h-5 w-5" />
           </button>
         </div>
       </div>
@@ -873,9 +890,49 @@ export default function Workspace() {
       {/* Mutation Form Modal */}
       <MutationFormModal 
         open={mutationModalOpen} 
-        onOpenChange={setMutationModalOpen}
+        onOpenChange={(open) => {
+          setMutationModalOpen(open);
+          if (!open) setHasExported(true); // Assume they exported when closing
+        }}
         projectId={projectId || ''}
         projectName={project.name}
+      />
+      
+      {/* Project Completion Modal */}
+      <ProjectCompletionModal
+        open={completionModalOpen}
+        onOpenChange={setCompletionModalOpen}
+        projectName={project.name}
+        plotCount={plotCount}
+        invalidPlotCount={invalidPlotCount}
+        hasExported={hasExported}
+        isCompleting={isCompleting}
+        onComplete={async () => {
+          if (!projectId) return;
+          setIsCompleting(true);
+          try {
+            await updateProject.mutateAsync({
+              projectId,
+              updates: { status: 'completed' },
+            });
+            toast.success('Project marked as complete!');
+          } finally {
+            setIsCompleting(false);
+          }
+        }}
+        onArchive={async () => {
+          if (!projectId) return;
+          try {
+            await updateProject.mutateAsync({
+              projectId,
+              updates: { status: 'archived' },
+            });
+            toast.success('Project archived');
+            navigate('/');
+          } catch (error) {
+            toast.error('Failed to archive project');
+          }
+        }}
       />
       
       {/* Plot Status Card (Mobile-friendly) */}
