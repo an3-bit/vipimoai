@@ -4,9 +4,10 @@ import { MapContainer, TileLayer, Polygon, useMap, Popup, Polyline } from 'react
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { supabase } from '@/integrations/supabase/client';
-import { useProject, useProjectPlots, useCreatePlots, useDeleteProjectPlots, useUpdateProject } from '@/hooks/useSurvey';
+import { useProject, useProjectPlots, useCreatePlots, useDeleteProjectPlots, useUpdateProject, useUpdatePlotStatus } from '@/hooks/useSurvey';
 import { useRiparianBuffer } from '@/hooks/useRiparianBuffer';
 import { RiverDrawingTool } from '@/components/map/RiverDrawingTool';
+import { PlotStatusCard, PlotStatus } from '@/components/workspace/PlotStatusCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -53,9 +54,18 @@ export default function Workspace() {
   const createPlots = useCreatePlots();
   const deletePlots = useDeleteProjectPlots();
   const updateProject = useUpdateProject();
+  const updatePlotStatus = useUpdatePlotStatus();
   
   // Riparian buffer hook
   const riparian = useRiparianBuffer(30);
+  
+  // Plot status modal state
+  const [selectedPlot, setSelectedPlot] = useState<{
+    id: string;
+    plotNumber: number;
+    areaSqm: number;
+    status: PlotStatus;
+  } | null>(null);
   
   // Map state
   const [mapLayer, setMapLayer] = useState<'standard' | 'satellite' | 'topo'>('standard');
@@ -193,12 +203,12 @@ export default function Workspace() {
       // Filter to only valid plots for saving
       const validPlots = plots.filter(p => p.isValid);
       
-      // Prepare plots for database
+      // Prepare plots for database with 'available' status
       const plotsToSave = validPlots.map((plot, index) => ({
         plot_number: index + 1,
         coordinates: plot.coordinates,
         area_sqm: width * depth,
-        status: 'valid',
+        status: 'available', // Default to available for new plots
       }));
       
       // Save to Supabase
@@ -393,30 +403,79 @@ export default function Workspace() {
           />
         )}
         
-        {/* Plot Grid */}
-        {showPlotGrid && plotGrid.map((plot, index) => (
+        {/* Plot Grid - Clickable with Status Colors */}
+        {showPlotGrid && savedPlots && savedPlots.map((plot: any, index: number) => {
+          const plotStatus = (plot.status === 'available' || plot.status === 'reserved' || plot.status === 'sold') 
+            ? plot.status 
+            : 'available';
+          
+          // Status-based colors
+          const getPlotColor = (status: string) => {
+            switch (status) {
+              case 'sold': return 'hsl(0, 72%, 51%)'; // Red
+              case 'reserved': return 'hsl(38, 92%, 50%)'; // Amber
+              case 'available': 
+              default: return 'hsl(152, 69%, 40%)'; // Green
+            }
+          };
+          
+          const color = getPlotColor(plotStatus);
+          const coords = plot.coordinates as { lat: number; lng: number }[];
+          
+          return (
+            <Polygon
+              key={plot.id}
+              positions={coords.map(c => [c.lat, c.lng] as [number, number])}
+              pathOptions={{
+                color: color,
+                weight: 2,
+                fillColor: color,
+                fillOpacity: 0.4,
+              }}
+              eventHandlers={{
+                click: () => {
+                  setSelectedPlot({
+                    id: plot.id,
+                    plotNumber: plot.plot_number,
+                    areaSqm: plot.area_sqm,
+                    status: plotStatus as PlotStatus,
+                  });
+                },
+              }}
+            >
+              <Popup>
+                <div className="text-center">
+                  <p className="font-semibold">Plot {plot.plot_number}</p>
+                  <p className="text-xs text-muted-foreground">{plot.area_sqm.toFixed(0)} m²</p>
+                  <p className={`text-xs font-medium mt-1 ${
+                    plotStatus === 'sold' ? 'text-rose-500' :
+                    plotStatus === 'reserved' ? 'text-amber-500' : 'text-emerald-500'
+                  }`}>
+                    {plotStatus.charAt(0).toUpperCase() + plotStatus.slice(1)}
+                  </p>
+                </div>
+              </Popup>
+            </Polygon>
+          );
+        })}
+        
+        {/* Also show invalid plots (riparian overlap) in red if generated but not saved */}
+        {showPlotGrid && plotGrid.filter(p => !p.isValid).map((plot, index) => (
           <Polygon
-            key={index}
+            key={`invalid-${index}`}
             positions={plot.coordinates.map(c => [c.lat, c.lng] as [number, number])}
             pathOptions={{
-              color: plot.isValid ? 'hsl(199, 89%, 48%)' : 'hsl(0, 72%, 51%)',
+              color: 'hsl(0, 72%, 51%)',
               weight: 1.5,
-              fillColor: plot.isValid ? 'hsl(199, 89%, 48%)' : 'hsl(0, 72%, 51%)',
-              fillOpacity: plot.isValid ? 0.3 : 0.5,
+              fillColor: 'hsl(0, 72%, 51%)',
+              fillOpacity: 0.5,
+              dashArray: '4, 4',
             }}
           >
             <Popup>
-              <div>
-                <p className="font-semibold">
-                  {plot.isValid ? `Plot ${plotGrid.filter((p, i) => p.isValid && i <= index).length}` : 'INVALID'}
-                </p>
-                {plot.isValid ? (
-                  <p className="text-sm text-muted-foreground">50x100ft (465 sqm)</p>
-                ) : (
-                  <p className="text-sm text-destructive">
-                    Riparian overlap: {plot.overlapPercent.toFixed(1)}%
-                  </p>
-                )}
+              <div className="text-center">
+                <p className="font-semibold text-destructive">INVALID</p>
+                <p className="text-xs text-destructive">Riparian overlap: {plot.overlapPercent.toFixed(1)}%</p>
               </div>
             </Popup>
           </Polygon>
@@ -604,6 +663,25 @@ export default function Workspace() {
                   <span className="text-muted-foreground">Status:</span>
                   <span className="font-mono font-semibold text-success">Saved ✓</span>
                 </div>
+                
+                {/* Plot Status Legend */}
+                <div className="pt-2 border-t border-border/50 mt-2">
+                  <p className="text-xs text-muted-foreground mb-2">Plot Status (tap to change):</p>
+                  <div className="grid grid-cols-3 gap-1 text-xs">
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 rounded bg-emerald-500"></div>
+                      <span>Available</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 rounded bg-amber-500"></div>
+                      <span>Reserved</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 rounded bg-rose-500"></div>
+                      <span>Sold</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -755,6 +833,29 @@ export default function Workspace() {
         onOpenChange={setMutationModalOpen}
         projectId={projectId || ''}
         projectName={project.name}
+      />
+      
+      {/* Plot Status Card (Mobile-friendly) */}
+      <PlotStatusCard
+        open={!!selectedPlot}
+        onOpenChange={(open) => !open && setSelectedPlot(null)}
+        plotNumber={selectedPlot?.plotNumber || 0}
+        areaSqm={selectedPlot?.areaSqm || 0}
+        currentStatus={selectedPlot?.status || 'available'}
+        isUpdating={updatePlotStatus.isPending}
+        onStatusChange={(newStatus) => {
+          if (selectedPlot && projectId) {
+            updatePlotStatus.mutate({
+              plotId: selectedPlot.id,
+              status: newStatus,
+              projectId,
+            }, {
+              onSuccess: () => {
+                setSelectedPlot(null);
+              },
+            });
+          }
+        }}
       />
     </div>
   );
