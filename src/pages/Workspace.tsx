@@ -97,6 +97,7 @@ export default function Workspace() {
   const [plotCount, setPlotCount] = useState(0);
   const [invalidPlotCount, setInvalidPlotCount] = useState(0);
   const [efficiency, setEfficiency] = useState(0);
+  const [roadAreaSqm, setRoadAreaSqm] = useState(0);
 
   // Get parcel coordinates from project
   const parcelCoordinates = project?.parcels?.[0]?.coordinates as { lat: number; lng: number }[] || [];
@@ -117,13 +118,15 @@ export default function Workspace() {
       setPlotGrid(loadedPlots);
       setPlotCount(savedPlots.length);
       setShowPlotGrid(true);
-      // Calculate real efficiency
+      // Calculate real efficiency with road area
       const width = plotSize === 'custom' ? parseFloat(customWidth) : 15.24;
       const depth = plotSize === 'custom' ? parseFloat(customDepth) : 30.48;
-      const stats = calculateSubdivisionStats(parcelAreaSqm, loadedPlots, width, depth);
+      const road = parseFloat(roadWidth);
+      const stats = calculateSubdivisionStats(parcelAreaSqm, loadedPlots, width, depth, road);
       setEfficiency(Math.round(stats.efficiency));
+      setRoadAreaSqm(stats.roadAreaSqm);
     }
-  }, [savedPlots, parcelAreaSqm, plotSize, customWidth, customDepth]);
+  }, [savedPlots, parcelAreaSqm, plotSize, customWidth, customDepth, roadWidth]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -195,8 +198,8 @@ export default function Workspace() {
       const riparianBuffer = riparianBufferEnabled ? riparian.bufferPolygon : [];
       const plots = generatePlotGrid(parcelCoordinates, width, depth, road, riparianBuffer);
       
-      // Calculate stats
-      const stats = calculateSubdivisionStats(parcelAreaSqm, plots, width, depth);
+      // Calculate stats with road area
+      const stats = calculateSubdivisionStats(parcelAreaSqm, plots, width, depth, road);
       
       setIsSaving(true);
       
@@ -222,6 +225,7 @@ export default function Workspace() {
       setPlotCount(stats.validCount);
       setInvalidPlotCount(stats.invalidCount);
       setEfficiency(Math.round(stats.efficiency));
+      setRoadAreaSqm(stats.roadAreaSqm);
       setShowPlotGrid(true);
       
       // Update project status
@@ -656,8 +660,19 @@ export default function Workspace() {
                   </div>
                 )}
                 <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Road Surrender:</span>
+                  <span className="font-mono font-semibold text-muted-foreground">
+                    {(roadAreaSqm / 10000).toFixed(4)} Ha
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Yield Efficiency:</span>
-                  <span className="font-mono font-semibold text-primary">{efficiency}%</span>
+                  <span className={`font-mono font-semibold ${
+                    efficiency >= 70 ? 'text-primary' : 
+                    efficiency >= 50 ? 'text-amber-500' : 'text-destructive'
+                  }`}>
+                    {efficiency}%
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Status:</span>
