@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Polygon, useMap, Popup, Polyline } from 'react-leaflet';
-import L from 'leaflet';
+import { MapContainer, TileLayer, Polygon, Popup, Polyline } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { supabase } from '@/integrations/supabase/client';
 import { useProject, useProjectPlots, useCreatePlots, useDeleteProjectPlots, useUpdateProject, useUpdatePlotStatus } from '@/hooks/useSurvey';
 import { useLogActivity } from '@/hooks/useActivityLog';
 import { useRiparianBuffer } from '@/hooks/useRiparianBuffer';
+import { useCoPilot } from '@/hooks/useCoPilot';
 import { RiverDrawingTool } from '@/components/map/RiverDrawingTool';
+import { ZoomToFitControl, ZoomToFitRef } from '@/components/map/ZoomToFitControl';
+import { CoPilotLoadingOverlay } from '@/components/map/CoPilotLoadingOverlay';
 import { PlotStatusCard, PlotStatus } from '@/components/workspace/PlotStatusCard';
 import { ProjectCompletionModal } from '@/components/workspace/ProjectCompletionModal';
 import { ActivityTimeline } from '@/components/workspace/ActivityTimeline';
@@ -21,24 +23,10 @@ import { toast } from 'sonner';
 import { 
   ArrowLeft, Map, Layers, Mountain, Upload, AlertTriangle, Grid3X3, 
   FileText, Send, MessageSquare, ChevronDown, Loader2,
-  Download, Settings, Waves, X, Save, CheckCircle, History
+  Download, Settings, Waves, X, Save, CheckCircle, History, Maximize2
 } from 'lucide-react';
 import { generatePlotGrid, calculateSubdivisionStats, mockChatMessages, GeneratedPlot } from '@/data/mockData';
 import { MutationFormModal } from '@/components/workspace/MutationFormModal';
-
-// Map controller component
-function MapController({ coordinates }: { coordinates: { lat: number; lng: number }[] }) {
-  const map = useMap();
-  
-  useEffect(() => {
-    if (coordinates.length > 0) {
-      const bounds = L.latLngBounds(coordinates.map(c => [c.lat, c.lng]));
-      map.fitBounds(bounds, { padding: [100, 100] });
-    }
-  }, [coordinates, map]);
-  
-  return null;
-}
 
 // Chat message interface
 interface ChatMessage {
@@ -94,7 +82,10 @@ export default function Workspace() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(mockChatMessages);
   const [chatInput, setChatInput] = useState('');
+  const [isCoPilotProcessing, setIsCoPilotProcessing] = useState(false);
+  const [coPilotMessage, setCoPilotMessage] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const zoomToFitRef = useRef<ZoomToFitRef>(null);
   
   // Mutation modal
   const [mutationModalOpen, setMutationModalOpen] = useState(false);
@@ -284,6 +275,38 @@ export default function Workspace() {
     }
   };
 
+  // Clear plots function for CoPilot reset command
+  const clearPlots = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      if (savedPlots && savedPlots.length > 0) {
+        await deletePlots.mutateAsync(projectId);
+      }
+      setPlotGrid([]);
+      setPlotCount(0);
+      setInvalidPlotCount(0);
+      setEfficiency(0);
+      setRoadAreaSqm(0);
+      setShowPlotGrid(false);
+      riparian.clearRiver();
+      setShowHazardZone(false);
+      refetchPlots();
+      toast.success('Map cleared successfully');
+    } catch (error: any) {
+      toast.error('Failed to clear plots: ' + error.message);
+    }
+  }, [projectId, savedPlots, deletePlots, riparian, refetchPlots]);
+
+  // Initialize CoPilot hook
+  const coPilot = useCoPilot({
+    setRoadWidth,
+    setPlotSize,
+    setCustomWidth,
+    setCustomDepth,
+    handleAutoSubdivide,
+    clearPlots,
+  });
+
   const handleStartDrawRiver = () => {
     riparian.startDrawing();
     toast.info("Click on the map to draw river path. Press Enter or Escape to finish.");
@@ -309,9 +332,14 @@ export default function Workspace() {
     }
   };
 
-  const handleChatSubmit = (e: React.FormEvent) => {
+  // Zoom to fit handler
+  const handleZoomToFit = useCallback(() => {
+    zoomToFitRef.current?.fitBounds();
+  }, []);
+
+  const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
+    if (!chatInput.trim() || isCoPilotProcessing) return;
 
     const userMessage: ChatMessage = {
       role: 'user',
@@ -320,29 +348,57 @@ export default function Workspace() {
     };
     
     setChatMessages(prev => [...prev, userMessage]);
+    const inputText = chatInput;
     setChatInput('');
 
-    // Simulate AI response
-    setTimeout(() => {
-      let aiResponse = "I understand. Let me process that for you.";
-      
-      if (chatInput.toLowerCase().includes('commercial')) {
-        aiResponse = "Adjusting grid for commercial plots (100x100ft)... Done. 12 Commercial plots added to the northern block.";
-      } else if (chatInput.toLowerCase().includes('road')) {
-        aiResponse = "Road width adjusted to 12m. Re-calculating plot positions... Complete.";
-      } else if (chatInput.toLowerCase().includes('split') || chatInput.toLowerCase().includes('northern')) {
-        aiResponse = "Analyzing northern block... Adjusting grid... Done. 12 Commercial plots added.";
-      } else if (chatInput.toLowerCase().includes('river') || chatInput.toLowerCase().includes('riparian')) {
-        aiResponse = "To draw a river, click the 'Draw River' button (wave icon) in the toolbar, then click points on the map to trace the river path. Press Enter when done.";
-      }
+    // Show loading overlay
+    setIsCoPilotProcessing(true);
+    setCoPilotMessage('Processing command...');
 
+    try {
+      // Execute the CoPilot command
+      const result = await coPilot.executeCommand(inputText);
+      
+      // Add a small delay for visual feedback
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Update message based on result
+      if (result.success && result.command.type !== 'unknown') {
+        setCoPilotMessage(result.resultMessage);
+        
+        // Update the plot count in the message if subdivision was run
+        let finalMessage = result.resultMessage;
+        if (result.command.type === 'subdivide' || result.command.type === 'road_width' || result.command.type === 'plot_dimensions') {
+          // Wait a moment for state to update
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        
+        const aiMessage: ChatMessage = {
+          role: 'ai',
+          content: finalMessage,
+          timestamp: new Date(),
+        };
+        setChatMessages(prev => [...prev, aiMessage]);
+      } else {
+        // Unknown command - provide help
+        const aiMessage: ChatMessage = {
+          role: 'ai',
+          content: result.resultMessage,
+          timestamp: new Date(),
+        };
+        setChatMessages(prev => [...prev, aiMessage]);
+      }
+    } catch (error: any) {
       const aiMessage: ChatMessage = {
         role: 'ai',
-        content: aiResponse,
+        content: `Error: ${error.message || 'Something went wrong'}`,
         timestamp: new Date(),
       };
       setChatMessages(prev => [...prev, aiMessage]);
-    }, 1000);
+    } finally {
+      setIsCoPilotProcessing(false);
+      setCoPilotMessage('');
+    }
   };
 
   const getTileUrl = () => {
@@ -389,11 +445,12 @@ export default function Workspace() {
         zoomControl={false}
       >
         <TileLayer
+          key={mapLayer}
           attribution='&copy; OpenStreetMap contributors'
           url={getTileUrl()}
         />
         {parcelCoordinates.length > 0 && (
-          <MapController coordinates={parcelCoordinates} />
+          <ZoomToFitControl ref={zoomToFitRef} coordinates={parcelCoordinates} />
         )}
         
         {/* River Drawing Tool */}
@@ -530,7 +587,8 @@ export default function Workspace() {
         ))}
       </MapContainer>
 
-      {/* Drawing Mode Indicator */}
+      {/* CoPilot Loading Overlay */}
+      <CoPilotLoadingOverlay visible={isCoPilotProcessing} message={coPilotMessage} />
       {riparian.isDrawingRiver && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000]">
           <div className="glass-panel rounded-lg px-4 py-2 flex items-center gap-3 bg-primary/90 text-primary-foreground">
@@ -582,6 +640,15 @@ export default function Workspace() {
           title="Activity Timeline"
         >
           <History className="h-4 w-4" />
+        </button>
+        
+        {/* Zoom to Fit Button */}
+        <button
+          onClick={handleZoomToFit}
+          className="floating-control p-2 rounded transition-colors hover:bg-secondary"
+          title="Zoom to Fit"
+        >
+          <Maximize2 className="h-4 w-4" />
         </button>
         
         <div className="floating-control flex flex-col gap-1">
