@@ -14,6 +14,44 @@ export type Database = {
   }
   public: {
     Tables: {
+      activity_logs: {
+        Row: {
+          action_label: string
+          action_type: string
+          created_at: string
+          details: Json | null
+          id: string
+          project_id: string
+          user_id: string
+        }
+        Insert: {
+          action_label: string
+          action_type: string
+          created_at?: string
+          details?: Json | null
+          id?: string
+          project_id: string
+          user_id: string
+        }
+        Update: {
+          action_label?: string
+          action_type?: string
+          created_at?: string
+          details?: Json | null
+          id?: string
+          project_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_logs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       beacons: {
         Row: {
           beacon_number: number

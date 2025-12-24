@@ -5,10 +5,12 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { supabase } from '@/integrations/supabase/client';
 import { useProject, useProjectPlots, useCreatePlots, useDeleteProjectPlots, useUpdateProject, useUpdatePlotStatus } from '@/hooks/useSurvey';
+import { useLogActivity } from '@/hooks/useActivityLog';
 import { useRiparianBuffer } from '@/hooks/useRiparianBuffer';
 import { RiverDrawingTool } from '@/components/map/RiverDrawingTool';
 import { PlotStatusCard, PlotStatus } from '@/components/workspace/PlotStatusCard';
 import { ProjectCompletionModal } from '@/components/workspace/ProjectCompletionModal';
+import { ActivityTimeline } from '@/components/workspace/ActivityTimeline';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,7 +21,7 @@ import { toast } from 'sonner';
 import { 
   ArrowLeft, Map, Layers, Mountain, Upload, AlertTriangle, Grid3X3, 
   FileText, Send, MessageSquare, ChevronDown, Loader2,
-  Download, Settings, Waves, X, Save, CheckCircle
+  Download, Settings, Waves, X, Save, CheckCircle, History
 } from 'lucide-react';
 import { generatePlotGrid, calculateSubdivisionStats, mockChatMessages, GeneratedPlot } from '@/data/mockData';
 import { MutationFormModal } from '@/components/workspace/MutationFormModal';
@@ -56,9 +58,13 @@ export default function Workspace() {
   const deletePlots = useDeleteProjectPlots();
   const updateProject = useUpdateProject();
   const updatePlotStatus = useUpdatePlotStatus();
+  const logActivity = useLogActivity();
   
   // Riparian buffer hook
   const riparian = useRiparianBuffer(30);
+  
+  // Activity timeline state
+  const [showTimeline, setShowTimeline] = useState(false);
   
   // Plot status modal state
   const [selectedPlot, setSelectedPlot] = useState<{
@@ -172,6 +178,17 @@ export default function Workspace() {
       setIsProcessing(false);
       
       const invalidCount = plotGrid.filter(p => !p.isValid).length;
+      
+      // Log activity
+      if (projectId) {
+        logActivity.mutate({
+          projectId,
+          actionType: 'hazard_scan',
+          actionLabel: 'Hazard scan completed',
+          details: { invalid_plots: invalidCount },
+        });
+      }
+      
       if (invalidCount > 0) {
         toast.warning(`Hazard Scan Complete: ${invalidCount} plots overlap with riparian reserve. Affected areas highlighted in red.`);
       } else {
@@ -179,7 +196,7 @@ export default function Workspace() {
       }
     }, 1000);
   };
-
+  
   const handleAutoSubdivide = async () => {
     if (!projectId || parcelCoordinates.length === 0) {
       toast.error("No parcel coordinates available");
@@ -238,6 +255,19 @@ export default function Workspace() {
         updates: { status: 'in_progress' },
       });
       
+      // Log activity
+      logActivity.mutate({
+        projectId,
+        actionType: 'subdivision_generated',
+        actionLabel: `Generated ${stats.validCount} plots`,
+        details: {
+          plot_count: stats.validCount,
+          invalid_count: stats.invalidCount,
+          efficiency: `${Math.round(stats.efficiency)}%`,
+          plot_size: `${width}m x ${depth}m`,
+        },
+      });
+      
       if (stats.invalidCount > 0) {
         toast.warning(`Generated ${stats.validCount} valid plots. ${stats.invalidCount} plots discarded (riparian overlap). Efficiency: ${Math.round(stats.efficiency)}%.`);
       } else {
@@ -264,6 +294,16 @@ export default function Workspace() {
     if (riparian.riverPoints.length >= 2) {
       toast.success(`River drawn with ${riparian.riverPoints.length} points. 30m buffer zone created.`);
       setShowHazardZone(true);
+      
+      // Log activity
+      if (projectId) {
+        logActivity.mutate({
+          projectId,
+          actionType: 'river_drawn',
+          actionLabel: 'River line drawn',
+          details: { points: riparian.riverPoints.length, buffer_m: 30 },
+        });
+      }
     } else {
       toast.warning("River needs at least 2 points.");
     }
@@ -534,7 +574,16 @@ export default function Workspace() {
       </div>
 
       {/* Layer Toggle (Top Right) */}
-      <div className="absolute top-4 right-4 z-[1000]">
+      <div className="absolute top-4 right-4 z-[1000] flex gap-2">
+        {/* Activity Timeline Toggle */}
+        <button
+          onClick={() => setShowTimeline(!showTimeline)}
+          className={`floating-control p-2 rounded transition-colors ${showTimeline ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`}
+          title="Activity Timeline"
+        >
+          <History className="h-4 w-4" />
+        </button>
+        
         <div className="floating-control flex flex-col gap-1">
           <button
             onClick={() => setMapLayer('standard')}
@@ -559,6 +608,29 @@ export default function Workspace() {
           </button>
         </div>
       </div>
+
+      {/* Activity Timeline Panel */}
+      {showTimeline && (
+        <div className="absolute top-16 right-4 z-[1000] w-80">
+          <div className="glass-panel rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-border/50 flex items-center justify-between">
+              <h3 className="font-semibold flex items-center gap-2">
+                <History className="h-4 w-4 text-primary" />
+                Activity Timeline
+              </h3>
+              <button 
+                onClick={() => setShowTimeline(false)}
+                className="p-1 hover:bg-secondary rounded"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-4">
+              <ActivityTimeline projectId={projectId || ''} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Command Center (Left Panel) */}
       <div className="absolute bottom-4 left-4 z-[1000] w-80">
@@ -915,6 +987,12 @@ export default function Workspace() {
               projectId,
               updates: { status: 'completed' },
             });
+            logActivity.mutate({
+              projectId,
+              actionType: 'project_completed',
+              actionLabel: 'Project marked as complete',
+              details: { plot_count: plotCount },
+            });
             toast.success('Project marked as complete!');
           } finally {
             setIsCompleting(false);
@@ -926,6 +1004,11 @@ export default function Workspace() {
             await updateProject.mutateAsync({
               projectId,
               updates: { status: 'archived' },
+            });
+            logActivity.mutate({
+              projectId,
+              actionType: 'project_archived',
+              actionLabel: 'Project archived',
             });
             toast.success('Project archived');
             navigate('/');
@@ -951,6 +1034,12 @@ export default function Workspace() {
               projectId,
             }, {
               onSuccess: () => {
+                logActivity.mutate({
+                  projectId,
+                  actionType: 'plot_status_changed',
+                  actionLabel: `Plot ${selectedPlot.plotNumber} marked as ${newStatus}`,
+                  details: { plot_number: selectedPlot.plotNumber, status: newStatus },
+                });
                 setSelectedPlot(null);
               },
             });
