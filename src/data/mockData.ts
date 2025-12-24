@@ -1,3 +1,6 @@
+import { checkPlotRiparianOverlap, calculateOverlapPercentage } from '@/lib/riparian';
+import { Coordinate } from '@/types/survey';
+
 // Mock project data for Kenya
 export const mockProjects = [
   {
@@ -65,26 +68,31 @@ export const mockParcelCoordinates = [
   { lat: -1.1180, lng: 37.1140 },
 ];
 
-// Simulated river/riparian zone
-export const mockRiparianZone = [
-  { lat: -1.1135, lng: 37.1140 },
-  { lat: -1.1140, lng: 37.1165 },
-  { lat: -1.1150, lng: 37.1190 },
-  { lat: -1.1145, lng: 37.1220 },
-  { lat: -1.1155, lng: 37.1220 },
-  { lat: -1.1160, lng: 37.1185 },
-  { lat: -1.1150, lng: 37.1160 },
-  { lat: -1.1145, lng: 37.1140 },
-];
+export interface GeneratedPlot {
+  coordinates: Coordinate[];
+  isValid: boolean;
+  overlapPercent: number;
+}
 
-// Generate plot grid
+export interface PlotGridResult {
+  plots: GeneratedPlot[];
+  validCount: number;
+  invalidCount: number;
+  totalAreaSqm: number;
+  plotAreaSqm: number;
+  roadAreaSqm: number;
+  efficiency: number;
+}
+
+// Generate plot grid with riparian collision detection
 export function generatePlotGrid(
   parcel: { lat: number; lng: number }[],
   plotWidth: number = 15.24, // 50ft in meters
   plotDepth: number = 30.48, // 100ft in meters
-  roadWidth: number = 9
-) {
-  const plots: { lat: number; lng: number }[][] = [];
+  roadWidth: number = 9,
+  riparianBuffer: Coordinate[] = []
+): GeneratedPlot[] {
+  const plots: GeneratedPlot[] = [];
   
   const minLat = Math.min(...parcel.map(p => p.lat));
   const maxLat = Math.max(...parcel.map(p => p.lat));
@@ -97,35 +105,78 @@ export function generatePlotGrid(
 
   const plotWidthDeg = plotWidth * lngDegPerMeter;
   const plotDepthDeg = plotDepth * latDegPerMeter;
-  const roadWidthDeg = roadWidth * latDegPerMeter;
+  const roadWidthDegLat = roadWidth * latDegPerMeter;
+  const roadWidthDegLng = roadWidth * lngDegPerMeter;
 
-  let currentLat = minLat + 0.0002; // Small setback
+  // Starting with a setback
+  const setback = 0.0002;
+  let currentLat = minLat + setback;
   let rowCount = 0;
 
-  while (currentLat + plotDepthDeg < maxLat - 0.0002) {
-    let currentLng = minLng + 0.0002;
+  while (currentLat + plotDepthDeg < maxLat - setback) {
+    let currentLng = minLng + setback;
     
-    while (currentLng + plotWidthDeg < maxLng - 0.0002) {
-      const plot = [
+    while (currentLng + plotWidthDeg < maxLng - setback) {
+      const plotCoords: Coordinate[] = [
         { lat: currentLat, lng: currentLng },
         { lat: currentLat, lng: currentLng + plotWidthDeg },
         { lat: currentLat + plotDepthDeg, lng: currentLng + plotWidthDeg },
         { lat: currentLat + plotDepthDeg, lng: currentLng },
       ];
-      plots.push(plot);
-      currentLng += plotWidthDeg + (roadWidthDeg * 0.1); // Small gap between plots
+      
+      // Check for riparian overlap
+      let isValid = true;
+      let overlapPercent = 0;
+      
+      if (riparianBuffer.length >= 3) {
+        const overlaps = checkPlotRiparianOverlap(plotCoords, riparianBuffer);
+        if (overlaps) {
+          isValid = false;
+          overlapPercent = calculateOverlapPercentage(plotCoords, riparianBuffer);
+        }
+      }
+      
+      plots.push({
+        coordinates: plotCoords,
+        isValid,
+        overlapPercent,
+      });
+      
+      // Move to next plot with small gap
+      currentLng += plotWidthDeg + (roadWidthDegLng * 0.15);
     }
     
     rowCount++;
     // Add road every 2 rows
     if (rowCount % 2 === 0) {
-      currentLat += plotDepthDeg + roadWidthDeg * latDegPerMeter;
+      currentLat += plotDepthDeg + roadWidthDegLat;
     } else {
-      currentLat += plotDepthDeg + (roadWidthDeg * 0.1 * latDegPerMeter);
+      currentLat += plotDepthDeg + (roadWidthDegLat * 0.15);
     }
   }
 
   return plots;
+}
+
+// Calculate subdivision statistics with real math
+export function calculateSubdivisionStats(
+  parcelAreaSqm: number,
+  plots: GeneratedPlot[],
+  plotWidth: number,
+  plotDepth: number
+): { validCount: number; invalidCount: number; efficiency: number; plotAreaSqm: number } {
+  const validPlots = plots.filter(p => p.isValid);
+  const invalidPlots = plots.filter(p => !p.isValid);
+  const plotAreaSqm = plotWidth * plotDepth;
+  const totalPlotArea = validPlots.length * plotAreaSqm;
+  const efficiency = parcelAreaSqm > 0 ? (totalPlotArea / parcelAreaSqm) * 100 : 0;
+  
+  return {
+    validCount: validPlots.length,
+    invalidCount: invalidPlots.length,
+    efficiency: Math.min(efficiency, 100), // Cap at 100%
+    plotAreaSqm,
+  };
 }
 
 // Chat messages for simulation
