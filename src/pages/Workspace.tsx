@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Polygon, useMap, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Polygon, useMap, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { supabase } from '@/integrations/supabase/client';
 import { useProject, useProjectPlots, useCreatePlots, useDeleteProjectPlots, useUpdateProject } from '@/hooks/useSurvey';
+import { useRiparianBuffer } from '@/hooks/useRiparianBuffer';
+import { RiverDrawingTool } from '@/components/map/RiverDrawingTool';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,9 +17,9 @@ import { toast } from 'sonner';
 import { 
   ArrowLeft, Map, Layers, Mountain, Upload, AlertTriangle, Grid3X3, 
   FileText, Send, MessageSquare, ChevronDown, Loader2,
-  Download, Settings
+  Download, Settings, Waves, X
 } from 'lucide-react';
-import { mockRiparianZone, generatePlotGrid, mockChatMessages } from '@/data/mockData';
+import { generatePlotGrid, calculateSubdivisionStats, mockChatMessages, GeneratedPlot } from '@/data/mockData';
 import { MutationFormModal } from '@/components/workspace/MutationFormModal';
 
 // Map controller component
@@ -52,6 +54,9 @@ export default function Workspace() {
   const deletePlots = useDeleteProjectPlots();
   const updateProject = useUpdateProject();
   
+  // Riparian buffer hook
+  const riparian = useRiparianBuffer(30);
+  
   // Map state
   const [mapLayer, setMapLayer] = useState<'standard' | 'satellite' | 'topo'>('standard');
   
@@ -66,7 +71,7 @@ export default function Workspace() {
   const [customWidth, setCustomWidth] = useState('15.24');
   const [customDepth, setCustomDepth] = useState('30.48');
   const [roadWidth, setRoadWidth] = useState('9');
-  const [riparianBuffer, setRiparianBuffer] = useState(true);
+  const [riparianBufferEnabled, setRiparianBufferEnabled] = useState(true);
   
   // Chat state
   const [chatOpen, setChatOpen] = useState(false);
@@ -78,13 +83,13 @@ export default function Workspace() {
   const [mutationModalOpen, setMutationModalOpen] = useState(false);
   
   // Generated data
-  const [plotGrid, setPlotGrid] = useState<{ lat: number; lng: number }[][]>([]);
+  const [plotGrid, setPlotGrid] = useState<GeneratedPlot[]>([]);
   const [plotCount, setPlotCount] = useState(0);
+  const [invalidPlotCount, setInvalidPlotCount] = useState(0);
   const [efficiency, setEfficiency] = useState(0);
 
   // Get parcel coordinates from project
   const parcelCoordinates = project?.parcels?.[0]?.coordinates as { lat: number; lng: number }[] || [];
-  const riparianZone = mockRiparianZone;
   
   // Calculate area
   const parcelAreaSqm = project?.parcels?.[0]?.area_sqm || 0;
@@ -94,13 +99,21 @@ export default function Workspace() {
   // Load saved plots on mount
   useEffect(() => {
     if (savedPlots && savedPlots.length > 0) {
-      const loadedPlots = savedPlots.map((plot: any) => plot.coordinates as { lat: number; lng: number }[]);
+      const loadedPlots: GeneratedPlot[] = savedPlots.map((plot: any) => ({
+        coordinates: plot.coordinates as { lat: number; lng: number }[],
+        isValid: plot.status !== 'invalid',
+        overlapPercent: 0,
+      }));
       setPlotGrid(loadedPlots);
       setPlotCount(savedPlots.length);
       setShowPlotGrid(true);
-      setEfficiency(88); // Calculate based on coverage
+      // Calculate real efficiency
+      const width = plotSize === 'custom' ? parseFloat(customWidth) : 15.24;
+      const depth = plotSize === 'custom' ? parseFloat(customDepth) : 30.48;
+      const stats = calculateSubdivisionStats(parcelAreaSqm, loadedPlots, width, depth);
+      setEfficiency(Math.round(stats.efficiency));
     }
-  }, [savedPlots]);
+  }, [savedPlots, parcelAreaSqm, plotSize, customWidth, customDepth]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -123,13 +136,31 @@ export default function Workspace() {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
+  // Show riparian buffer when river is drawn
+  useEffect(() => {
+    if (riparian.hasBuffer) {
+      setShowHazardZone(true);
+    }
+  }, [riparian.hasBuffer]);
+
   const handleRunHazardScan = () => {
+    if (!riparian.hasRiver) {
+      toast.info("Draw a river first using the 'Draw River' tool to run a hazard scan.");
+      return;
+    }
+    
     setIsProcessing(true);
     setTimeout(() => {
       setShowHazardZone(true);
       setIsProcessing(false);
-      toast.warning("Hazard Scan Complete: 3 plots overlap with riparian reserve. Affected areas highlighted in red.");
-    }, 1500);
+      
+      const invalidCount = plotGrid.filter(p => !p.isValid).length;
+      if (invalidCount > 0) {
+        toast.warning(`Hazard Scan Complete: ${invalidCount} plots overlap with riparian reserve. Affected areas highlighted in red.`);
+      } else {
+        toast.success("Hazard Scan Complete: No plots overlap with riparian reserve.");
+      }
+    }, 1000);
   };
 
   const handleAutoSubdivide = async () => {
@@ -150,16 +181,23 @@ export default function Workspace() {
       const depth = plotSize === 'custom' ? parseFloat(customDepth) : 30.48;
       const road = parseFloat(roadWidth);
       
-      // Generate plots locally
-      const plots = generatePlotGrid(parcelCoordinates, width, depth, road);
+      // Generate plots with riparian collision detection
+      const riparianBuffer = riparianBufferEnabled ? riparian.bufferPolygon : [];
+      const plots = generatePlotGrid(parcelCoordinates, width, depth, road, riparianBuffer);
+      
+      // Calculate stats
+      const stats = calculateSubdivisionStats(parcelAreaSqm, plots, width, depth);
       
       setIsSaving(true);
       
+      // Filter to only valid plots for saving
+      const validPlots = plots.filter(p => p.isValid);
+      
       // Prepare plots for database
-      const plotsToSave = plots.map((coords, index) => ({
+      const plotsToSave = validPlots.map((plot, index) => ({
         plot_number: index + 1,
-        coordinates: coords,
-        area_sqm: width * depth, // Approximate
+        coordinates: plot.coordinates,
+        area_sqm: width * depth,
         status: 'valid',
       }));
       
@@ -169,10 +207,11 @@ export default function Workspace() {
         plots: plotsToSave,
       });
       
-      // Update local state
+      // Update local state with ALL plots (including invalid for display)
       setPlotGrid(plots);
-      setPlotCount(plots.length);
-      setEfficiency(88);
+      setPlotCount(stats.validCount);
+      setInvalidPlotCount(stats.invalidCount);
+      setEfficiency(Math.round(stats.efficiency));
       setShowPlotGrid(true);
       
       // Update project status
@@ -181,7 +220,11 @@ export default function Workspace() {
         updates: { status: 'in_progress' },
       });
       
-      toast.success(`Success: ${plots.length} Plots generated and saved. Yield Efficiency: 88%.`);
+      if (stats.invalidCount > 0) {
+        toast.warning(`Generated ${stats.validCount} valid plots. ${stats.invalidCount} plots discarded (riparian overlap). Efficiency: ${Math.round(stats.efficiency)}%.`);
+      } else {
+        toast.success(`Success: ${stats.validCount} plots generated and saved. Yield Efficiency: ${Math.round(stats.efficiency)}%.`);
+      }
       
       // Refetch to ensure sync
       refetchPlots();
@@ -190,6 +233,21 @@ export default function Workspace() {
     } finally {
       setIsProcessing(false);
       setIsSaving(false);
+    }
+  };
+
+  const handleStartDrawRiver = () => {
+    riparian.startDrawing();
+    toast.info("Click on the map to draw river path. Press Enter or Escape to finish.");
+  };
+
+  const handleFinishDrawRiver = () => {
+    riparian.stopDrawing();
+    if (riparian.riverPoints.length >= 2) {
+      toast.success(`River drawn with ${riparian.riverPoints.length} points. 30m buffer zone created.`);
+      setShowHazardZone(true);
+    } else {
+      toast.warning("River needs at least 2 points.");
     }
   };
 
@@ -216,6 +274,8 @@ export default function Workspace() {
         aiResponse = "Road width adjusted to 12m. Re-calculating plot positions... Complete.";
       } else if (chatInput.toLowerCase().includes('split') || chatInput.toLowerCase().includes('northern')) {
         aiResponse = "Analyzing northern block... Adjusting grid... Done. 12 Commercial plots added.";
+      } else if (chatInput.toLowerCase().includes('river') || chatInput.toLowerCase().includes('riparian')) {
+        aiResponse = "To draw a river, click the 'Draw River' button (wave icon) in the toolbar, then click points on the map to trace the river path. Press Enter when done.";
       }
 
       const aiMessage: ChatMessage = {
@@ -278,6 +338,14 @@ export default function Workspace() {
           <MapController coordinates={parcelCoordinates} />
         )}
         
+        {/* River Drawing Tool */}
+        <RiverDrawingTool
+          isDrawing={riparian.isDrawingRiver}
+          riverPoints={riparian.riverPoints}
+          onPointAdd={riparian.addRiverPoint}
+          onDrawingComplete={handleFinishDrawRiver}
+        />
+        
         {/* Parent Parcel Boundary */}
         {parcelCoordinates.length > 0 && (
           <Polygon
@@ -292,10 +360,10 @@ export default function Workspace() {
           />
         )}
         
-        {/* Hazard Zone (Riparian) */}
-        {showHazardZone && (
+        {/* Riparian Buffer Zone (30m from river) */}
+        {showHazardZone && riparian.bufferPolygon.length > 0 && (
           <Polygon
-            positions={riparianZone.map(c => [c.lat, c.lng] as [number, number])}
+            positions={riparian.bufferPolygon.map(c => [c.lat, c.lng] as [number, number])}
             pathOptions={{
               color: 'hsl(0, 72%, 51%)',
               weight: 2,
@@ -313,27 +381,63 @@ export default function Workspace() {
           </Polygon>
         )}
         
+        {/* River Line (drawn) */}
+        {!riparian.isDrawingRiver && riparian.riverPoints.length >= 2 && (
+          <Polyline
+            positions={riparian.riverPoints.map(p => [p.lat, p.lng] as [number, number])}
+            pathOptions={{
+              color: 'hsl(210, 100%, 50%)',
+              weight: 4,
+              opacity: 0.9,
+            }}
+          />
+        )}
+        
         {/* Plot Grid */}
         {showPlotGrid && plotGrid.map((plot, index) => (
           <Polygon
             key={index}
-            positions={plot.map(c => [c.lat, c.lng] as [number, number])}
+            positions={plot.coordinates.map(c => [c.lat, c.lng] as [number, number])}
             pathOptions={{
-              color: 'hsl(199, 89%, 48%)',
+              color: plot.isValid ? 'hsl(199, 89%, 48%)' : 'hsl(0, 72%, 51%)',
               weight: 1.5,
-              fillColor: 'hsl(199, 89%, 48%)',
-              fillOpacity: 0.3,
+              fillColor: plot.isValid ? 'hsl(199, 89%, 48%)' : 'hsl(0, 72%, 51%)',
+              fillOpacity: plot.isValid ? 0.3 : 0.5,
             }}
           >
             <Popup>
               <div>
-                <p className="font-semibold">Plot {index + 1}</p>
-                <p className="text-sm text-muted-foreground">50x100ft (465 sqm)</p>
+                <p className="font-semibold">
+                  {plot.isValid ? `Plot ${plotGrid.filter((p, i) => p.isValid && i <= index).length}` : 'INVALID'}
+                </p>
+                {plot.isValid ? (
+                  <p className="text-sm text-muted-foreground">50x100ft (465 sqm)</p>
+                ) : (
+                  <p className="text-sm text-destructive">
+                    Riparian overlap: {plot.overlapPercent.toFixed(1)}%
+                  </p>
+                )}
               </div>
             </Popup>
           </Polygon>
         ))}
       </MapContainer>
+
+      {/* Drawing Mode Indicator */}
+      {riparian.isDrawingRiver && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000]">
+          <div className="glass-panel rounded-lg px-4 py-2 flex items-center gap-3 bg-primary/90 text-primary-foreground">
+            <Waves className="h-4 w-4" />
+            <span className="text-sm font-medium">Drawing River - Click to add points, Enter to finish</span>
+            <button 
+              onClick={handleFinishDrawRiver}
+              className="p-1 hover:bg-primary-foreground/20 rounded"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Saving Indicator */}
       {isSaving && (
@@ -453,21 +557,45 @@ export default function Workspace() {
             <div className="flex items-center justify-between">
               <div>
                 <Label className="text-sm">Riparian Buffer</Label>
-                <p className="text-xs text-muted-foreground">Auto-detect rivers</p>
+                <p className="text-xs text-muted-foreground">
+                  {riparian.hasRiver ? 'River drawn (30m buffer active)' : 'Draw river to enable'}
+                </p>
               </div>
               <Switch 
-                checked={riparianBuffer} 
-                onCheckedChange={setRiparianBuffer}
+                checked={riparianBufferEnabled} 
+                onCheckedChange={setRiparianBufferEnabled}
+                disabled={!riparian.hasRiver}
               />
             </div>
+
+            {/* River Info */}
+            {riparian.hasRiver && (
+              <div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-blue-400">River: {riparian.riverPoints.length} points</span>
+                  <button 
+                    onClick={riparian.clearRiver}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Stats */}
             {showPlotGrid && (
               <div className="p-3 bg-secondary/50 rounded-lg space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Plots Generated:</span>
+                  <span className="text-muted-foreground">Valid Plots:</span>
                   <span className="font-mono font-semibold text-primary">{plotCount}</span>
                 </div>
+                {invalidPlotCount > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Invalid (Riparian):</span>
+                    <span className="font-mono font-semibold text-destructive">{invalidPlotCount}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Yield Efficiency:</span>
                   <span className="font-mono font-semibold text-primary">{efficiency}%</span>
@@ -491,6 +619,15 @@ export default function Workspace() {
             title="Import Field Data (.CSV, .DXF)"
           >
             <Upload className="h-5 w-5" />
+          </button>
+          
+          {/* Draw River */}
+          <button 
+            className={`tool-btn ${riparian.isDrawingRiver ? 'active' : ''}`}
+            onClick={riparian.isDrawingRiver ? handleFinishDrawRiver : handleStartDrawRiver}
+            title={riparian.isDrawingRiver ? "Finish Drawing" : "Draw River"}
+          >
+            <Waves className="h-5 w-5" />
           </button>
           
           {/* Hazard Scan */}
