@@ -1,66 +1,127 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Download, FileJson, Send, CheckCircle, FileOutput, Loader2 } from 'lucide-react';
+import { Download, FileJson, Send, CheckCircle, FileOutput, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useProjectPlots } from '@/hooks/useSurvey';
+import { sqmToHectares } from '@/lib/geometry';
+import { generateArdhisasaJSON, generatePDF, downloadFile } from '@/lib/exports';
 
 interface MutationFormModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
   projectName?: string;
+  clientName?: string;
+  parcelAreaSqm?: number;
 }
 
-export function MutationFormModal({ open, onOpenChange, projectId, projectName = 'Project' }: MutationFormModalProps) {
+export function MutationFormModal({ 
+  open, 
+  onOpenChange, 
+  projectId, 
+  projectName = 'Project',
+  clientName,
+  parcelAreaSqm = 0,
+}: MutationFormModalProps) {
   // Fetch real plot data from Supabase
   const { data: plots, isLoading } = useProjectPlots(projectId);
 
-  // Transform plots to child titles
-  const childTitles = (plots || []).map((plot: any, index: number) => ({
-    plotNo: plot.plot_number || index + 1,
-    newTitle: `${projectName.toUpperCase().replace(/\s+/g, '/')}/${String(plot.plot_number || index + 1).padStart(4, '0')}`,
-    area: `${plot.area_sqm?.toFixed(0) || 465} sqm`,
-    status: plot.status === 'valid' ? 'Approved' : 'Pending',
-  }));
+  const motherTitle = `${projectName.toUpperCase().replace(/\s+/g, '/')}/0000`;
+  const totalAreaHa = sqmToHectares(parcelAreaSqm);
 
-  const handleExport = (format: string) => {
-    toast.info(`Export Started: Generating ${format.toUpperCase()} file for Ardhisasa submission...`);
+  // Transform plots to child titles with HECTARES
+  const childTitles = (plots || []).map((plot: any, index: number) => {
+    const plotAreaHa = sqmToHectares(plot.area_sqm || 465);
+    return {
+      plotNo: plot.plot_number || index + 1,
+      newTitle: `${projectName.toUpperCase().replace(/\s+/g, '/')}/${String(plot.plot_number || index + 1).padStart(4, '0')}`,
+      areaHa: plotAreaHa.toFixed(4),
+      areaSqm: plot.area_sqm?.toFixed(0) || '465',
+      status: plot.status === 'valid' ? 'Approved' : plot.status === 'invalid' ? 'Rejected' : 'Pending',
+    };
+  });
+
+  const handleExportArdhisasa = async () => {
+    toast.info('Generating Ardhisasa-compliant JSON...');
     
-    setTimeout(() => {
-      if (format === 'json') {
-        // Create actual JSON export
-        const exportData = {
-          metadata: {
-            projectName,
-            totalPlots: childTitles.length,
-            exportDate: new Date().toISOString(),
-            format: 'Ardhisasa Compatible',
-          },
-          plots: childTitles.map(t => ({
-            plotNumber: t.plotNo,
-            titleNumber: t.newTitle,
-            area: t.area,
-            status: t.status,
-          })),
-        };
-        
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${projectName.replace(/\s+/g, '_')}_mutation.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-      
-      toast.success(`${format.toUpperCase()} file ready for download.`);
-    }, 1500);
+    try {
+      const exportData = {
+        project: {
+          name: projectName,
+          clientName,
+          date: new Date().toLocaleDateString(),
+          motherTitle,
+        },
+        parcel: {
+          coordinates: [],
+          areaSqm: parcelAreaSqm,
+          perimeterM: 0,
+        },
+        plots: (plots || []).map((plot: any) => ({
+          id: plot.id || `plot-${plot.plot_number}`,
+          plot_number: plot.plot_number,
+          coordinates: plot.coordinates || [],
+          area_sqm: plot.area_sqm || 0,
+          width_m: plot.width_m,
+          depth_m: plot.depth_m,
+          is_partial: plot.is_partial,
+        })),
+        beacons: [],
+      };
+
+      const json = generateArdhisasaJSON(exportData);
+      downloadFile(json, `${projectName.replace(/\s+/g, '_')}_ardhisasa.json`, 'application/json');
+      toast.success('Ardhisasa JSON exported successfully');
+    } catch (error) {
+      toast.error('Export failed');
+    }
+  };
+
+  const handleExportPDF = async () => {
+    toast.info('Generating PDF Mutation Form...');
+    
+    try {
+      const exportData = {
+        project: {
+          name: projectName,
+          clientName,
+          date: new Date().toLocaleDateString(),
+          motherTitle,
+        },
+        parcel: {
+          coordinates: [],
+          areaSqm: parcelAreaSqm,
+          perimeterM: 0,
+        },
+        plots: (plots || []).map((plot: any) => ({
+          id: plot.id || `plot-${plot.plot_number}`,
+          plot_number: plot.plot_number,
+          coordinates: plot.coordinates || [],
+          area_sqm: plot.area_sqm || 0,
+          width_m: plot.width_m,
+          depth_m: plot.depth_m,
+          is_partial: plot.is_partial,
+        })),
+        beacons: [],
+      };
+
+      const pdfBlob = await generatePDF(exportData);
+      downloadFile(pdfBlob, `${projectName.replace(/\s+/g, '_')}_mutation_form.pdf`);
+      toast.success('PDF Mutation Form exported successfully');
+    } catch (error) {
+      toast.error('PDF export failed');
+    }
   };
 
   const plotCount = childTitles.length;
   const approvedCount = childTitles.filter(t => t.status === 'Approved').length;
+  const rejectedCount = childTitles.filter(t => t.status === 'Rejected').length;
+
+  // Calculate actual efficiency
+  const totalPlotArea = (plots || []).reduce((sum: number, p: any) => sum + (p.area_sqm || 0), 0);
+  const efficiency = parcelAreaSqm > 0 ? ((totalPlotArea / parcelAreaSqm) * 100).toFixed(1) : '0';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -72,6 +133,9 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
             </div>
             Mutation Form Preview
           </DialogTitle>
+          <DialogDescription>
+            Ardhisasa-compliant mutation form for land subdivision
+          </DialogDescription>
         </DialogHeader>
 
         {isLoading ? (
@@ -82,12 +146,12 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
         ) : (
           <ScrollArea className="max-h-[60vh]">
             <div className="p-6 space-y-6">
-              {/* Government Form Header */}
+              {/* Government Form Header - ARDHISASA STANDARD */}
               <div className="border border-border rounded-lg p-6 bg-secondary/30">
                 <div className="text-center mb-6">
                   <p className="text-xs text-muted-foreground uppercase tracking-wider">Republic of Kenya</p>
-                  <h2 className="text-lg font-bold mt-1">MINISTRY OF LANDS AND PHYSICAL PLANNING</h2>
-                  <p className="text-sm text-muted-foreground">Survey of Kenya / Ardhisasa Portal</p>
+                  <h2 className="text-lg font-bold mt-1">THE LAND REGISTRATION ACT</h2>
+                  <p className="text-sm text-muted-foreground">(Cap 300 Laws of Kenya)</p>
                   <div className="mt-4 inline-block px-4 py-2 bg-primary/10 rounded-lg">
                     <p className="text-xl font-bold text-primary">FORM RL 7A</p>
                     <p className="text-xs text-muted-foreground">Application for Subdivision</p>
@@ -99,15 +163,15 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
                   <div className="space-y-3">
                     <div>
                       <p className="text-xs text-muted-foreground uppercase">Mother Title</p>
-                      <p className="font-mono font-semibold">{projectName.toUpperCase().replace(/\s+/g, '/')}/0000</p>
+                      <p className="font-mono font-semibold">{motherTitle}</p>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground uppercase">Registered Owner</p>
-                      <p className="font-semibold">{projectName} Limited</p>
+                      <p className="font-semibold">{clientName || `${projectName} Limited`}</p>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground uppercase">Original Area</p>
-                      <p className="font-mono">16.18 Hectares (40 Acres)</p>
+                      <p className="font-mono font-bold text-primary">{totalAreaHa.toFixed(4)} Ha</p>
                     </div>
                   </div>
                   <div className="space-y-3">
@@ -138,13 +202,14 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
                 </div>
               </div>
 
-              {/* Child Titles Table */}
+              {/* Child Titles Table - WITH HECTARES */}
               <div className="border border-border rounded-lg overflow-hidden">
                 <div className="p-4 border-b border-border bg-secondary/30">
                   <h3 className="font-semibold">Proposed Child Titles ({plotCount})</h3>
                 </div>
                 {plotCount === 0 ? (
                   <div className="p-8 text-center text-muted-foreground">
+                    <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-warning" />
                     No plots generated yet. Use Auto-Subdivide to generate plots.
                   </div>
                 ) : (
@@ -153,7 +218,8 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
                       <TableRow className="bg-secondary/50">
                         <TableHead className="w-16">Plot #</TableHead>
                         <TableHead>New Title Number</TableHead>
-                        <TableHead>Area</TableHead>
+                        <TableHead>Area (Ha)</TableHead>
+                        <TableHead>Area (m²)</TableHead>
                         <TableHead className="text-right">Status</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -162,14 +228,18 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
                         <TableRow key={title.plotNo}>
                           <TableCell className="font-mono">{title.plotNo}</TableCell>
                           <TableCell className="font-mono font-semibold">{title.newTitle}</TableCell>
-                          <TableCell>{title.area}</TableCell>
+                          <TableCell className="font-mono font-bold text-primary">{title.areaHa} Ha</TableCell>
+                          <TableCell className="font-mono text-muted-foreground">{title.areaSqm} m²</TableCell>
                           <TableCell className="text-right">
                             <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
                               title.status === 'Approved' 
                                 ? 'bg-success/20 text-success' 
+                                : title.status === 'Rejected'
+                                ? 'bg-destructive/20 text-destructive'
                                 : 'bg-warning/20 text-warning'
                             }`}>
                               {title.status === 'Approved' && <CheckCircle className="h-3 w-3" />}
+                              {title.status === 'Rejected' && <AlertTriangle className="h-3 w-3" />}
                               {title.status}
                             </span>
                           </TableCell>
@@ -177,7 +247,7 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
                       ))}
                       {plotCount > 20 && (
                         <TableRow>
-                          <TableCell colSpan={4} className="text-center text-muted-foreground">
+                          <TableCell colSpan={5} className="text-center text-muted-foreground">
                             ... and {plotCount - 20} more plots
                           </TableCell>
                         </TableRow>
@@ -188,18 +258,22 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
               </div>
 
               {/* Summary Stats */}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-4 gap-4">
                 <div className="p-4 border border-border rounded-lg text-center bg-secondary/30">
                   <p className="text-2xl font-bold text-primary">{plotCount}</p>
                   <p className="text-xs text-muted-foreground">Total Plots</p>
                 </div>
                 <div className="p-4 border border-border rounded-lg text-center bg-secondary/30">
-                  <p className="text-2xl font-bold text-primary">88%</p>
+                  <p className="text-2xl font-bold text-primary">{efficiency}%</p>
                   <p className="text-xs text-muted-foreground">Land Utilization</p>
                 </div>
                 <div className="p-4 border border-border rounded-lg text-center bg-secondary/30">
                   <p className="text-2xl font-bold text-success">{approvedCount}</p>
                   <p className="text-xs text-muted-foreground">Approved</p>
+                </div>
+                <div className="p-4 border border-border rounded-lg text-center bg-secondary/30">
+                  <p className="text-2xl font-bold text-destructive">{rejectedCount}</p>
+                  <p className="text-xs text-muted-foreground">Rejected</p>
                 </div>
               </div>
             </div>
@@ -214,7 +288,7 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
           <div className="flex items-center gap-2">
             <Button 
               variant="outline" 
-              onClick={() => handleExport('json')}
+              onClick={handleExportArdhisasa}
               disabled={plotCount === 0}
             >
               <FileJson className="h-4 w-4 mr-2" />
@@ -222,14 +296,14 @@ export function MutationFormModal({ open, onOpenChange, projectId, projectName =
             </Button>
             <Button 
               variant="outline"
-              onClick={() => handleExport('pdf')}
+              onClick={handleExportPDF}
               disabled={plotCount === 0}
             >
               <Download className="h-4 w-4 mr-2" />
               Download PDF
             </Button>
             <Button 
-              onClick={() => handleExport('send')}
+              onClick={() => toast.info('Email integration coming soon')}
               disabled={plotCount === 0}
             >
               <Send className="h-4 w-4 mr-2" />
