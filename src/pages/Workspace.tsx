@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 import { 
   ArrowLeft, Map, Layers, Mountain, Upload, AlertTriangle, Grid3X3, 
   FileText, Send, MessageSquare, ChevronDown, Loader2,
-  Download, Settings, Waves, X
+  Download, Settings, Waves, X, Save, CheckCircle
 } from 'lucide-react';
 import { generatePlotGrid, calculateSubdivisionStats, mockChatMessages, GeneratedPlot } from '@/data/mockData';
 import { MutationFormModal } from '@/components/workspace/MutationFormModal';
@@ -752,6 +752,34 @@ export default function Workspace() {
           </button>
           
           <div className="w-px h-8 bg-border mx-1" />
+          
+          {/* Save Button */}
+          <button 
+            className={`tool-btn ${isSaving ? '' : 'hover:text-success'}`}
+            onClick={async () => {
+              if (!projectId) return;
+              setIsSaving(true);
+              try {
+                await updateProject.mutateAsync({
+                  projectId,
+                  updates: { status: 'in_progress' },
+                });
+                toast.success('Project saved successfully');
+              } catch (error) {
+                toast.error('Failed to save project');
+              } finally {
+                setIsSaving(false);
+              }
+            }}
+            disabled={isSaving}
+            title="Save Project"
+          >
+            {isSaving ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Save className="h-5 w-5" />
+            )}
+          </button>
           
           {/* Generate Mutation */}
           <button 
