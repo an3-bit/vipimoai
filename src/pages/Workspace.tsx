@@ -106,13 +106,21 @@ export default function Workspace() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
-  // Check auth
+  // Check auth with proper listener
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session?.user) {
         navigate('/auth');
       }
     });
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.user) {
+        navigate('/auth');
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, [navigate]);
 
   const handleRunHazardScan = () => {
