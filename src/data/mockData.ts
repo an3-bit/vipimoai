@@ -84,6 +84,11 @@ export interface SubdivisionStats {
   plotAreaSqm: number;
 }
 
+export interface AccessEdgeConfig {
+  edgeIndex: number;
+  roadWidth: number;
+}
+
 /**
  * Generate plot grid with proper road width subtraction and riparian collision detection
  * 
@@ -91,13 +96,15 @@ export interface SubdivisionStats {
  * - Access roads run perpendicular to plot depth (between rows of back-to-back plots)
  * - Plots are arranged in pairs (back-to-back) with road access from front
  * - Full road width is subtracted between every 2 rows of plots
+ * - If accessEdges are provided, plots on those edges are placed directly against the boundary
  */
 export function generatePlotGrid(
   parcel: { lat: number; lng: number }[],
   plotWidth: number = 15.24, // 50ft in meters
   plotDepth: number = 30.48, // 100ft in meters
   roadWidth: number = 9,
-  riparianBuffer: Coordinate[] = []
+  riparianBuffer: Coordinate[] = [],
+  accessEdges: AccessEdgeConfig[] = []
 ): GeneratedPlot[] {
   const plots: GeneratedPlot[] = [];
   
@@ -121,49 +128,104 @@ export function generatePlotGrid(
   const setbackLat = perimeterSetback * latDegPerMeter;
   const setbackLng = perimeterSetback * lngDegPerMeter;
 
-  // Calculate usable area after perimeter setback
-  const usableMinLat = minLat + setbackLat;
-  const usableMaxLat = maxLat - setbackLat;
-  const usableMinLng = minLng + setbackLng;
-  const usableMaxLng = maxLng - setbackLng;
+  // Determine which edges have existing access roads
+  // Edge 0: South (minLat), Edge 1: East (maxLng), Edge 2: North (maxLat), Edge 3: West (minLng)
+  const hasAccessSouth = accessEdges.some(e => e.edgeIndex === 0);
+  const hasAccessEast = accessEdges.some(e => e.edgeIndex === 1);
+  const hasAccessNorth = accessEdges.some(e => e.edgeIndex === 2);
+  const hasAccessWest = accessEdges.some(e => e.edgeIndex === 3);
+
+  // Calculate usable area - no setback on access road edges
+  const usableMinLat = hasAccessSouth ? minLat : minLat + setbackLat;
+  const usableMaxLat = hasAccessNorth ? maxLat : maxLat - setbackLat;
+  const usableMinLng = hasAccessWest ? minLng : minLng + setbackLng;
+  const usableMaxLng = hasAccessEast ? maxLng : maxLng - setbackLng;
   
   // Calculate parcel dimensions in meters
   const parcelWidthM = (maxLng - minLng) / lngDegPerMeter;
   const parcelDepthM = (maxLat - minLat) / latDegPerMeter;
   
-  // Calculate how many plots fit with proper road spacing
-  // Layout: [ROAD][PLOT][PLOT back-to-back][ROAD][PLOT][PLOT back-to-back]...
-  // Each "block" = road + 2 plots depth
-  const blockDepth = roadWidth + (2 * plotDepth); // One road serves 2 back-to-back rows
-  const usableDepth = parcelDepthM - (2 * perimeterSetback);
-  const numBlocks = Math.floor(usableDepth / blockDepth);
+  // Calculate effective setbacks for calculations
+  const effectiveSouthSetback = hasAccessSouth ? 0 : perimeterSetback;
+  const effectiveNorthSetback = hasAccessNorth ? 0 : perimeterSetback;
+  const effectiveWestSetback = hasAccessWest ? 0 : perimeterSetback;
+  const effectiveEastSetback = hasAccessEast ? 0 : perimeterSetback;
+  
+  // Calculate usable dimensions
+  const usableDepth = parcelDepthM - effectiveSouthSetback - effectiveNorthSetback;
+  const usableWidth = parcelWidthM - effectiveWestSetback - effectiveEastSetback;
+  
+  // Determine if we need internal vertical road (only if no west/east access)
+  const needsVerticalRoad = !hasAccessWest && !hasAccessEast;
+  const verticalRoadWidth = needsVerticalRoad ? roadWidth : 0;
   
   // For width: plots side by side with small gap (1m) for fencing/boundary
   const plotSpacing = 1; // 1m gap between plots in a row
   const plotWithSpacing = plotWidth + plotSpacing;
-  const usableWidth = parcelWidthM - (2 * perimeterSetback) - roadWidth; // Subtract one vertical road
-  const plotsPerRow = Math.floor(usableWidth / plotWithSpacing);
+  const effectiveWidth = usableWidth - verticalRoadWidth;
+  const plotsPerRow = Math.floor(effectiveWidth / plotWithSpacing);
   
-  if (numBlocks <= 0 || plotsPerRow <= 0) {
+  // Determine if first row needs road (only if no south access)
+  const firstRowNeedsRoad = !hasAccessSouth;
+  
+  // Calculate how many plots fit with proper road spacing
+  // If south edge has access, first row of plots goes directly to boundary
+  // Layout with access: [PLOT-frontage][PLOT back-to-back][ROAD][PLOT][PLOT back-to-back]...
+  // Layout without access: [ROAD][PLOT][PLOT back-to-back][ROAD]...
+  
+  let availableDepth = usableDepth;
+  let plotRows: { startLat: number; isFrontRow: boolean }[] = [];
+  
+  // First: Handle the front row if there's access on south edge
+  if (hasAccessSouth) {
+    // Front row placed directly against south boundary (no road surrender)
+    plotRows.push({ startLat: usableMinLat, isFrontRow: true });
+    // Second row back-to-back with front row
+    plotRows.push({ startLat: usableMinLat + plotDepth * latDegPerMeter, isFrontRow: false });
+    availableDepth -= (2 * plotDepth);
+  }
+  
+  // Calculate remaining blocks (each block = road + 2 back-to-back plots)
+  const blockDepth = roadWidth + (2 * plotDepth);
+  const remainingBlocks = Math.floor(availableDepth / blockDepth);
+  
+  // Starting position for remaining blocks
+  let currentDepthPosition = hasAccessSouth ? (2 * plotDepth) : 0;
+  
+  for (let block = 0; block < remainingBlocks; block++) {
+    // Add road at start of block
+    currentDepthPosition += roadWidth;
+    
+    // First row of block
+    plotRows.push({ 
+      startLat: usableMinLat + (currentDepthPosition * latDegPerMeter), 
+      isFrontRow: false 
+    });
+    currentDepthPosition += plotDepth;
+    
+    // Second row (back-to-back)
+    plotRows.push({ 
+      startLat: usableMinLat + (currentDepthPosition * latDegPerMeter), 
+      isFrontRow: false 
+    });
+    currentDepthPosition += plotDepth;
+  }
+  
+  if (plotsPerRow <= 0 || plotRows.length === 0) {
     return plots;
   }
 
-  // Generate plots
-  let currentLat = usableMinLat;
-  
-  for (let block = 0; block < numBlocks; block++) {
-    // Add road at start of each block
-    currentLat += roadWidthDegLat;
-    
-    // First row of plots (facing road)
-    let currentLng = usableMinLng + roadWidthDegLng; // Start after vertical access road
+  // Generate plots for each row
+  for (const row of plotRows) {
+    // Start position for this row
+    let currentLng = usableMinLng + (verticalRoadWidth * lngDegPerMeter);
     
     for (let col = 0; col < plotsPerRow; col++) {
       const plotCoords: Coordinate[] = [
-        { lat: currentLat, lng: currentLng },
-        { lat: currentLat, lng: currentLng + plotWidthDeg },
-        { lat: currentLat + plotDepthDeg, lng: currentLng + plotWidthDeg },
-        { lat: currentLat + plotDepthDeg, lng: currentLng },
+        { lat: row.startLat, lng: currentLng },
+        { lat: row.startLat, lng: currentLng + plotWidthDeg },
+        { lat: row.startLat + plotDepthDeg, lng: currentLng + plotWidthDeg },
+        { lat: row.startLat + plotDepthDeg, lng: currentLng },
       ];
       
       // Check for riparian overlap
@@ -181,36 +243,6 @@ export function generatePlotGrid(
       plots.push({ coordinates: plotCoords, isValid, overlapPercent });
       currentLng += plotWidthDeg + (plotSpacing * lngDegPerMeter);
     }
-    
-    // Move to second row (back-to-back with first row)
-    currentLat += plotDepthDeg;
-    currentLng = usableMinLng + roadWidthDegLng;
-    
-    for (let col = 0; col < plotsPerRow; col++) {
-      const plotCoords: Coordinate[] = [
-        { lat: currentLat, lng: currentLng },
-        { lat: currentLat, lng: currentLng + plotWidthDeg },
-        { lat: currentLat + plotDepthDeg, lng: currentLng + plotWidthDeg },
-        { lat: currentLat + plotDepthDeg, lng: currentLng },
-      ];
-      
-      // Check for riparian overlap
-      let isValid = true;
-      let overlapPercent = 0;
-      
-      if (riparianBuffer.length >= 3) {
-        const overlaps = checkPlotRiparianOverlap(plotCoords, riparianBuffer);
-        if (overlaps) {
-          isValid = false;
-          overlapPercent = calculateOverlapPercentage(plotCoords, riparianBuffer);
-        }
-      }
-      
-      plots.push({ coordinates: plotCoords, isValid, overlapPercent });
-      currentLng += plotWidthDeg + (plotSpacing * lngDegPerMeter);
-    }
-    
-    currentLat += plotDepthDeg;
   }
 
   return plots;
