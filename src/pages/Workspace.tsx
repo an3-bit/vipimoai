@@ -23,10 +23,12 @@ import { toast } from 'sonner';
 import { 
   ArrowLeft, Map, Layers, Mountain, Upload, AlertTriangle, Grid3X3, 
   FileText, Send, MessageSquare, ChevronDown, Loader2,
-  Download, Settings, Waves, X, Save, CheckCircle, History, Maximize2
+  Download, Settings, Waves, X, Save, CheckCircle, History, Maximize2, Route
 } from 'lucide-react';
-import { generatePlotGrid, calculateSubdivisionStats, mockChatMessages, GeneratedPlot } from '@/data/mockData';
+import { generatePlotGrid, calculateSubdivisionStats, mockChatMessages, GeneratedPlot, AccessEdgeConfig } from '@/data/mockData';
 import { MutationFormModal } from '@/components/workspace/MutationFormModal';
+import { AccessRoadSelector, AccessEdge } from '@/components/map/AccessRoadSelector';
+import { YieldComparisonBadge } from '@/components/map/YieldComparisonBadge';
 
 // Chat message interface
 interface ChatMessage {
@@ -99,6 +101,12 @@ export default function Workspace() {
   const [invalidPlotCount, setInvalidPlotCount] = useState(0);
   const [efficiency, setEfficiency] = useState(0);
   const [roadAreaSqm, setRoadAreaSqm] = useState(0);
+  
+  // Access Road Selector state
+  const [accessEdges, setAccessEdges] = useState<AccessEdge[]>([]);
+  const [accessRoadMode, setAccessRoadMode] = useState(false);
+  const [baselinePlotCount, setBaselinePlotCount] = useState(0);
+  const [showYieldComparison, setShowYieldComparison] = useState(false);
 
   // Get parcel coordinates from project
   const parcelCoordinates = project?.parcels?.[0]?.coordinates as { lat: number; lng: number }[] || [];
@@ -195,6 +203,7 @@ export default function Workspace() {
     }
 
     setIsProcessing(true);
+    setShowYieldComparison(false);
     
     try {
       // Delete existing plots first
@@ -206,12 +215,26 @@ export default function Workspace() {
       const depth = plotSize === 'custom' ? parseFloat(customDepth) : 30.48;
       const road = parseFloat(roadWidth);
       
-      // Generate plots with riparian collision detection
+      // Convert AccessEdge[] to AccessEdgeConfig[]
+      const accessEdgeConfigs: AccessEdgeConfig[] = accessEdges.map(e => ({
+        edgeIndex: e.edgeIndex,
+        roadWidth: e.roadWidth,
+      }));
+      
+      // Generate plots with riparian collision detection and access edges
       const riparianBuffer = riparianBufferEnabled ? riparian.bufferPolygon : [];
-      const plots = generatePlotGrid(parcelCoordinates, width, depth, road, riparianBuffer);
+      const plots = generatePlotGrid(parcelCoordinates, width, depth, road, riparianBuffer, accessEdgeConfigs);
       
       // Calculate stats with road area
       const stats = calculateSubdivisionStats(parcelAreaSqm, plots, width, depth, road);
+      
+      // If access edges are used, calculate baseline for comparison
+      if (accessEdges.length > 0 && baselinePlotCount === 0) {
+        // Calculate baseline without access edges
+        const baselinePlots = generatePlotGrid(parcelCoordinates, width, depth, road, riparianBuffer, []);
+        const baselineStats = calculateSubdivisionStats(parcelAreaSqm, baselinePlots, width, depth, road);
+        setBaselinePlotCount(baselineStats.validCount);
+      }
       
       setIsSaving(true);
       
@@ -240,6 +263,12 @@ export default function Workspace() {
       setRoadAreaSqm(stats.roadAreaSqm);
       setShowPlotGrid(true);
       
+      // Show yield comparison if access edges are used
+      if (accessEdges.length > 0 && baselinePlotCount > 0) {
+        setShowYieldComparison(true);
+        setTimeout(() => setShowYieldComparison(false), 5000); // Hide after 5 seconds
+      }
+      
       // Update project status
       await updateProject.mutateAsync({
         projectId,
@@ -256,6 +285,7 @@ export default function Workspace() {
           invalid_count: stats.invalidCount,
           efficiency: `${Math.round(stats.efficiency)}%`,
           plot_size: `${width}m x ${depth}m`,
+          access_edges: accessEdges.length,
         },
       });
       
@@ -274,6 +304,29 @@ export default function Workspace() {
       setIsSaving(false);
     }
   };
+
+  // Handle access edge toggle
+  const handleAccessEdgeToggle = useCallback((edgeIndex: number, roadWidth?: number) => {
+    setAccessEdges(prev => {
+      const existing = prev.find(e => e.edgeIndex === edgeIndex);
+      if (existing) {
+        // Remove the edge
+        return prev.filter(e => e.edgeIndex !== edgeIndex);
+      } else if (roadWidth !== undefined) {
+        // Add new edge
+        const directions = ['South', 'East', 'North', 'West'];
+        return [...prev, {
+          edgeIndex,
+          roadWidth,
+          label: `${directions[edgeIndex]} Access (${roadWidth}m)`,
+        }];
+      }
+      return prev;
+    });
+    // Reset baseline when edges change
+    setBaselinePlotCount(0);
+    setShowYieldComparison(false);
+  }, []);
 
   // Clear plots function for CoPilot reset command
   const clearPlots = useCallback(async () => {
@@ -487,6 +540,16 @@ export default function Workspace() {
           />
         )}
         
+        {/* Access Road Selector - Interactive boundary line selection */}
+        {parcelCoordinates.length > 0 && (
+          <AccessRoadSelector
+            parcelCoordinates={parcelCoordinates}
+            accessEdges={accessEdges}
+            onAccessEdgeToggle={handleAccessEdgeToggle}
+            enabled={accessRoadMode}
+          />
+        )}
+        
         {/* Riparian Buffer Zone (30m from river) */}
         {showHazardZone && riparian.bufferPolygon.length > 0 && (
           <Polygon
@@ -601,6 +664,30 @@ export default function Workspace() {
 
       {/* CoPilot Loading Overlay */}
       <CoPilotLoadingOverlay visible={isCoPilotProcessing} message={coPilotMessage} />
+      
+      {/* Yield Comparison Badge */}
+      <YieldComparisonBadge 
+        beforeCount={baselinePlotCount} 
+        afterCount={plotCount} 
+        visible={showYieldComparison && accessEdges.length > 0} 
+      />
+      
+      {/* Access Road Mode Indicator */}
+      {accessRoadMode && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000]">
+          <div className="glass-panel rounded-lg px-4 py-2 flex items-center gap-3 bg-amber-500/90 text-white">
+            <Route className="h-4 w-4" />
+            <span className="text-sm font-medium">Click a boundary edge to mark as existing Access Road</span>
+            <button 
+              onClick={() => setAccessRoadMode(false)}
+              className="p-1 hover:bg-white/20 rounded"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+      
       {riparian.isDrawingRiver && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000]">
           <div className="glass-panel rounded-lg px-4 py-2 flex items-center gap-3 bg-primary/90 text-primary-foreground">
@@ -876,6 +963,15 @@ export default function Workspace() {
             title={riparian.isDrawingRiver ? "Finish Drawing" : "Draw River"}
           >
             <Waves className="h-5 w-5" />
+          </button>
+          
+          {/* Access Road Selector */}
+          <button 
+            className={`tool-btn ${accessRoadMode ? 'active' : ''} ${accessEdges.length > 0 ? 'text-emerald-500' : ''}`}
+            onClick={() => setAccessRoadMode(!accessRoadMode)}
+            title={accessEdges.length > 0 ? `Access Roads: ${accessEdges.length} selected` : "Mark Access Roads"}
+          >
+            <Route className="h-5 w-5" />
           </button>
           
           {/* Hazard Scan */}
