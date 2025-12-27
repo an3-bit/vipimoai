@@ -297,6 +297,17 @@ export default function Workspace() {
     }
   }, [projectId, savedPlots, deletePlots, riparian, refetchPlots]);
 
+  // Handler for riparian filter via CoPilot
+  const handleRiparianFilter = useCallback(() => {
+    if (!riparian.hasBuffer) {
+      toast.info("Draw a river first using the 'Draw River' tool to filter riparian zones.");
+      return;
+    }
+    // Re-run subdivision with riparian filtering enabled
+    setRiparianBufferEnabled(true);
+    handleAutoSubdivide();
+  }, [riparian.hasBuffer, handleAutoSubdivide]);
+
   // Initialize CoPilot hook
   const coPilot = useCoPilot({
     setRoadWidth,
@@ -305,6 +316,7 @@ export default function Workspace() {
     setCustomDepth,
     handleAutoSubdivide,
     clearPlots,
+    handleRiparianFilter: riparian.hasBuffer ? handleRiparianFilter : undefined,
   });
 
   const handleStartDrawRiver = () => {
