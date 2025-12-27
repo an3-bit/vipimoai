@@ -1,7 +1,10 @@
 import { useCallback } from 'react';
 
+// Conversion constants
+const FEET_TO_METERS = 0.3048;
+
 export interface CoPilotCommand {
-  type: 'road_width' | 'plot_dimensions' | 'subdivide' | 'reset' | 'unknown';
+  type: 'road_width' | 'plot_dimensions' | 'subdivide' | 'reset' | 'riparian_filter' | 'unknown';
   value?: number;
   width?: number;
   height?: number;
@@ -15,6 +18,7 @@ interface CoPilotHandlers {
   setCustomDepth: (depth: string) => void;
   handleAutoSubdivide: () => Promise<void>;
   clearPlots: () => void;
+  handleRiparianFilter?: () => void;
 }
 
 export function useCoPilot(handlers: CoPilotHandlers) {
@@ -43,8 +47,38 @@ export function useCoPilot(handlers: CoPilotHandlers) {
       };
     }
     
-    // Plot dimensions: "change plots to 50x100", "set plot size 40x80", "plots 30x60"
-    const plotDimMatch = lowerInput.match(/(?:change|set|make)?\s*(?:plot(?:s)?(?:\s*size)?(?:\s*to)?)\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i);
+    // Plot dimensions with FEET support: "change plots to 50x100ft", "set plot size 40x80 feet", "plots 30x60 ft"
+    const plotDimFeetMatch = lowerInput.match(/(?:change|set|make)?\s*(?:plot(?:s)?(?:\s*size)?(?:\s*to)?)\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(?:ft|feet|foot)/i);
+    if (plotDimFeetMatch) {
+      const widthFt = parseFloat(plotDimFeetMatch[1]);
+      const heightFt = parseFloat(plotDimFeetMatch[2]);
+      const widthM = widthFt * FEET_TO_METERS;
+      const heightM = heightFt * FEET_TO_METERS;
+      return {
+        type: 'plot_dimensions',
+        width: widthM,
+        height: heightM,
+        message: `Plot dimensions set to ${widthFt}ft x ${heightFt}ft (${widthM.toFixed(2)}m x ${heightM.toFixed(2)}m). Recalculating yield...`
+      };
+    }
+    
+    // Alternative feet patterns: "50x100ft plots", "50 by 100 feet"
+    const altFeetMatch = lowerInput.match(/(\d+(?:\.\d+)?)\s*(?:[x×]|by)\s*(\d+(?:\.\d+)?)\s*(?:ft|feet|foot)\s*(?:plot(?:s)?)?/i);
+    if (altFeetMatch && !lowerInput.includes('road')) {
+      const widthFt = parseFloat(altFeetMatch[1]);
+      const heightFt = parseFloat(altFeetMatch[2]);
+      const widthM = widthFt * FEET_TO_METERS;
+      const heightM = heightFt * FEET_TO_METERS;
+      return {
+        type: 'plot_dimensions',
+        width: widthM,
+        height: heightM,
+        message: `Plot dimensions set to ${widthFt}ft x ${heightFt}ft (${widthM.toFixed(2)}m x ${heightM.toFixed(2)}m). Recalculating yield...`
+      };
+    }
+    
+    // Plot dimensions in METERS: "change plots to 50x100", "set plot size 40x80m", "plots 30x60"
+    const plotDimMatch = lowerInput.match(/(?:change|set|make)?\s*(?:plot(?:s)?(?:\s*size)?(?:\s*to)?)\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(?:m(?:eters?)?)?(?!\s*(?:ft|feet|foot))/i);
     if (plotDimMatch) {
       const width = parseFloat(plotDimMatch[1]);
       const height = parseFloat(plotDimMatch[2]);
@@ -56,9 +90,9 @@ export function useCoPilot(handlers: CoPilotHandlers) {
       };
     }
     
-    // Alternative plot patterns: "50x100 plots", "50 by 100"
-    const altPlotMatch = lowerInput.match(/(\d+(?:\.\d+)?)\s*(?:[x×]|by)\s*(\d+(?:\.\d+)?)\s*(?:plot(?:s)?|m)?/i);
-    if (altPlotMatch && !lowerInput.includes('road')) {
+    // Alternative plot patterns (meters assumed): "50x100 plots", "50 by 100"
+    const altPlotMatch = lowerInput.match(/(\d+(?:\.\d+)?)\s*(?:[x×]|by)\s*(\d+(?:\.\d+)?)\s*(?:m(?:eters?)?)?\s*(?:plot(?:s)?)?/i);
+    if (altPlotMatch && !lowerInput.includes('road') && !lowerInput.includes('ft') && !lowerInput.includes('feet')) {
       const width = parseFloat(altPlotMatch[1]);
       const height = parseFloat(altPlotMatch[2]);
       return {
@@ -78,6 +112,15 @@ export function useCoPilot(handlers: CoPilotHandlers) {
       };
     }
     
+    // Riparian filter commands: "remove plots in river buffer", "filter riparian", "exclude river zone"
+    if (/(?:remove|exclude|filter|delete)\s*(?:plots?\s*(?:in|from|near|within))?\s*(?:river|riparian|buffer|hazard)/i.test(lowerInput) ||
+        /(?:river|riparian|buffer)\s*(?:filter|exclude|remove)/i.test(lowerInput)) {
+      return {
+        type: 'riparian_filter',
+        message: 'Filtering plots in riparian zone...'
+      };
+    }
+    
     // Reset/Clear commands: "clear map", "reset project", "clear plots", "start over"
     if (/(?:clear|reset|remove|delete)\s*(?:map|project|plots|all|grid|everything)/i.test(lowerInput) ||
         /start\s*over/i.test(lowerInput)) {
@@ -89,7 +132,7 @@ export function useCoPilot(handlers: CoPilotHandlers) {
     
     return {
       type: 'unknown',
-      message: "I didn't understand that command. Try:\n• \"Set roads to 6m\"\n• \"Change plots to 50x100\"\n• \"Run subdivision\"\n• \"Clear map\""
+      message: "I didn't understand that command. Try:\n• \"Set roads to 6m\"\n• \"Change plots to 50x100\" (meters) or \"50x100ft\" (feet)\n• \"Run subdivision\"\n• \"Remove plots in river buffer\"\n• \"Clear map\""
     };
   }, []);
 
@@ -143,6 +186,22 @@ export function useCoPilot(handlers: CoPilotHandlers) {
             success: true,
             resultMessage: 'Map cleared and subdivision reset.'
           };
+          
+        case 'riparian_filter':
+          if (handlers.handleRiparianFilter) {
+            handlers.handleRiparianFilter();
+            return {
+              command,
+              success: true,
+              resultMessage: 'Riparian filter applied. Plots overlapping the river buffer have been marked invalid.'
+            };
+          } else {
+            return {
+              command,
+              success: false,
+              resultMessage: 'Please draw a river first using the "Draw River" tool, then run subdivision to filter riparian zones.'
+            };
+          }
           
         case 'unknown':
         default:
