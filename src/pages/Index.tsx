@@ -86,13 +86,13 @@ export default function Index() {
   const navigate = useNavigate();
   const [user, setUser] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [viewMode, setViewMode] = useState<'map' | 'cards'>('cards');
+  const [viewMode, setViewMode] = useState<'map' | 'cards'>('map'); // Default to map view for Global Operations
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [clientName, setClientName] = useState('');
   const [locationName, setLocationName] = useState('');
   const [parcelCoordinates, setParcelCoordinates] = useState<Coordinate[] | null>(null);
-  const [mapLayer, setMapLayer] = useState<'standard' | 'satellite'>('standard');
+  const [mapLayer, setMapLayer] = useState<'standard' | 'satellite'>('satellite'); // Default to satellite for visual appeal
 
   const { data: dbProjects, isLoading, error, isFetching } = useProjects();
   const { data: profile } = useProfile();

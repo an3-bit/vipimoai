@@ -16,7 +16,7 @@ interface CoPilotHandlers {
   setPlotSize: (size: string) => void;
   setCustomWidth: (width: string) => void;
   setCustomDepth: (depth: string) => void;
-  handleAutoSubdivide: () => Promise<void>;
+  handleAutoSubdivide: () => Promise<any>;
   clearPlots: () => void;
   handleRiparianFilter?: () => void;
 }

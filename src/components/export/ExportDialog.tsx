@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, FileText, Map, Database, Loader2, Check } from 'lucide-react';
+import { Download, FileText, Map, Database, Loader2, Check, Code } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,6 +12,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Coordinate, Plot, Beacon } from '@/types/survey';
 import { calculateArea, calculatePerimeter } from '@/lib/geometry';
 import {
@@ -21,22 +22,27 @@ import {
   generateBeaconCSV,
   downloadFile,
 } from '@/lib/exports';
+import { generateMutationJSON, downloadMutationJSON, DrawingScale } from '@/lib/mutationExport';
 import { toast } from 'sonner';
 
 interface ExportDialogProps {
   projectName: string;
   clientName?: string;
+  surveyorLicense?: string;
+  surveyorName?: string;
   parcelCoordinates: Coordinate[];
   plots: Plot[];
   beacons: Beacon[];
   disabled?: boolean;
 }
 
-type ExportFormat = 'pdf' | 'geojson' | 'kml' | 'csv';
+type ExportFormat = 'pdf' | 'geojson' | 'kml' | 'csv' | 'json';
 
 export function ExportDialog({
   projectName,
   clientName,
+  surveyorLicense,
+  surveyorName,
   parcelCoordinates,
   plots,
   beacons,
@@ -46,6 +52,7 @@ export function ExportDialog({
   const [selectedFormats, setSelectedFormats] = useState<ExportFormat[]>(['pdf']);
   const [exporting, setExporting] = useState(false);
   const [completed, setCompleted] = useState<ExportFormat[]>([]);
+  const [drawingScale, setDrawingScale] = useState<DrawingScale>('1:2500');
 
   const toggleFormat = (format: ExportFormat) => {
     setSelectedFormats(prev =>
@@ -55,20 +62,28 @@ export function ExportDialog({
     );
   };
 
-  const getExportData = () => ({
-    project: {
-      name: projectName,
-      clientName,
-      date: new Date().toLocaleDateString(),
-    },
-    parcel: {
-      coordinates: parcelCoordinates,
-      areaSqm: calculateArea(parcelCoordinates),
-      perimeterM: calculatePerimeter(parcelCoordinates),
-    },
-    plots,
-    beacons,
-  });
+  const getExportData = () => {
+    const areaSqm = calculateArea(parcelCoordinates);
+    const perimeterM = calculatePerimeter(parcelCoordinates);
+    return {
+      project: {
+        name: projectName,
+        clientName,
+        date: new Date().toLocaleDateString(),
+        surveyorLicense,
+      },
+      parcel: {
+        coordinates: parcelCoordinates,
+        areaSqm,
+        perimeterM,
+      },
+      plots,
+      beacons,
+      // Additional data for JSON export
+      areaSqm,
+      perimeterM,
+    };
+  };
 
   const handleExport = async () => {
     if (selectedFormats.length === 0) {
@@ -99,6 +114,21 @@ export function ExportDialog({
           case 'csv':
             const csv = generateBeaconCSV(data);
             downloadFile(csv, `${safeName}_beacons.csv`, 'text/csv');
+            break;
+          case 'json':
+            const jsonData = generateMutationJSON({
+              projectName,
+              clientName,
+              surveyorLicense,
+              surveyorName,
+              parcelCoordinates,
+              parcelAreaSqm: data.areaSqm,
+              perimeterM: data.perimeterM,
+              plots,
+              beacons,
+              scale: drawingScale,
+            });
+            downloadMutationJSON(jsonData, `${safeName}_mutation_schema.json`);
             break;
         }
         setCompleted(prev => [...prev, format]);
@@ -140,6 +170,12 @@ export function ExportDialog({
       description: 'Spreadsheet-compatible list of all beacon coordinates',
       icon: <Database className="h-5 w-5 text-orange-500" />,
     },
+    {
+      id: 'json',
+      label: 'Mutation JSON Schema',
+      description: 'Structured JSON for Survey of Kenya workflow integration',
+      icon: <Code className="h-5 w-5 text-purple-500" />,
+    },
   ];
 
   return (
@@ -174,6 +210,30 @@ export function ExportDialog({
               <p className="text-xs text-muted-foreground">Vertices</p>
             </div>
           </div>
+
+          <Separator />
+
+          {/* Scale Selector for JSON export */}
+          {selectedFormats.includes('json') && (
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Drawing Scale (for JSON export)</Label>
+              <Select value={drawingScale} onValueChange={(v) => setDrawingScale(v as DrawingScale)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1:500">1:500 (Detail)</SelectItem>
+                  <SelectItem value="1:1000">1:1000</SelectItem>
+                  <SelectItem value="1:2500">1:2500 (Standard)</SelectItem>
+                  <SelectItem value="1:5000">1:5000</SelectItem>
+                  <SelectItem value="1:10000">1:10000 (Overview)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Scale affects the JSON schema output for cadastral workflows
+              </p>
+            </div>
+          )}
 
           <Separator />
 
