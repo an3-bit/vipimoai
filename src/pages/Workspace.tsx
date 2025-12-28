@@ -7,12 +7,15 @@ import { useProject, useProjectPlots, useCreatePlots, useDeleteProjectPlots, use
 import { useLogActivity } from '@/hooks/useActivityLog';
 import { useRiparianBuffer } from '@/hooks/useRiparianBuffer';
 import { useCoPilot } from '@/hooks/useCoPilot';
+import { useCoPilotRationale } from '@/hooks/useCoPilotRationale';
 import { RiverDrawingTool } from '@/components/map/RiverDrawingTool';
 import { ZoomToFitControl, ZoomToFitRef } from '@/components/map/ZoomToFitControl';
 import { CoPilotLoadingOverlay } from '@/components/map/CoPilotLoadingOverlay';
+import { ManualDraftingTools, DraftingTool } from '@/components/map/ManualDraftingTools';
 import { PlotStatusCard, PlotStatus } from '@/components/workspace/PlotStatusCard';
 import { ProjectCompletionModal } from '@/components/workspace/ProjectCompletionModal';
 import { ActivityTimeline } from '@/components/workspace/ActivityTimeline';
+import { WorkspaceTour } from '@/components/workspace/WorkspaceTour';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,7 +26,7 @@ import { toast } from 'sonner';
 import { 
   ArrowLeft, Map, Layers, Mountain, Upload, AlertTriangle, Grid3X3, 
   FileText, Send, MessageSquare, ChevronDown, Loader2,
-  Download, Settings, Waves, X, Save, CheckCircle, History, Maximize2, Route
+  Download, Settings, Waves, X, Save, CheckCircle, History, Maximize2, Route, HelpCircle
 } from 'lucide-react';
 import { generatePlotGrid, calculateSubdivisionStats, mockChatMessages, GeneratedPlot, AccessEdgeConfig } from '@/data/mockData';
 import { MutationFormModal } from '@/components/workspace/MutationFormModal';
@@ -107,6 +110,18 @@ export default function Workspace() {
   const [accessRoadMode, setAccessRoadMode] = useState(false);
   const [baselinePlotCount, setBaselinePlotCount] = useState(0);
   const [showYieldComparison, setShowYieldComparison] = useState(false);
+  
+  // Manual Drafting Tools state
+  const [activeDraftingTool, setActiveDraftingTool] = useState<DraftingTool>(null);
+  
+  // Workspace Tour state
+  const [showTour, setShowTour] = useState(false);
+  const [hasSeenTour, setHasSeenTour] = useState(() => {
+    return localStorage.getItem('vipimo_tour_completed') === 'true';
+  });
+  
+  // CoPilot Rationale hook
+  const { generateRationale } = useCoPilotRationale();
 
   // Get parcel coordinates from project
   const parcelCoordinates = project?.parcels?.[0]?.coordinates as { lat: number; lng: number }[] || [];
@@ -157,6 +172,14 @@ export default function Workspace() {
 
     return () => subscription.unsubscribe();
   }, [navigate]);
+
+  // Show tour for first-time users
+  useEffect(() => {
+    if (!hasSeenTour && !projectLoading && project) {
+      const timer = setTimeout(() => setShowTour(true), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [hasSeenTour, projectLoading, project]);
 
   // Show riparian buffer when river is drawn
   useEffect(() => {
@@ -294,6 +317,23 @@ export default function Workspace() {
       } else {
         toast.success(`Success: ${stats.validCount} plots generated and saved. Yield Efficiency: ${Math.round(stats.efficiency)}%.`);
       }
+      
+      // Generate and return rationale for CoPilot
+      const accessDirection = accessEdges.length > 0 ? accessEdges[0].label?.split(' ')[0] : undefined;
+      const rationale = generateRationale({
+        plotCount: stats.validCount,
+        invalidCount: stats.invalidCount,
+        efficiency: Math.round(stats.efficiency),
+        roadWidthM: road,
+        plotWidthM: width,
+        plotDepthM: depth,
+        hasRiparianBuffer: riparian.hasBuffer && riparianBufferEnabled,
+        riparianBufferM: 30,
+        accessEdgeDirection: accessDirection,
+        accessEdgeCount: accessEdges.length,
+      });
+      
+      return rationale;
       
       // Refetch to ensure sync
       refetchPlots();
@@ -672,6 +712,23 @@ export default function Workspace() {
         visible={showYieldComparison && accessEdges.length > 0} 
       />
       
+      {/* Manual Drafting Tools Palette */}
+      <ManualDraftingTools
+        activeTool={activeDraftingTool}
+        onToolChange={setActiveDraftingTool}
+        disabled={isProcessing}
+      />
+      
+      {/* Workspace Tour */}
+      <WorkspaceTour
+        run={showTour}
+        onComplete={() => {
+          setShowTour(false);
+          setHasSeenTour(true);
+          localStorage.setItem('vipimo_tour_completed', 'true');
+        }}
+      />
+      
       {/* Access Road Mode Indicator */}
       {accessRoadMode && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000]">
@@ -732,13 +789,22 @@ export default function Workspace() {
 
       {/* Layer Toggle (Top Right) */}
       <div className="absolute top-4 right-4 z-[1000] flex gap-2">
-        {/* Activity Timeline Toggle */}
+      {/* Activity Timeline Toggle */}
         <button
           onClick={() => setShowTimeline(!showTimeline)}
           className={`floating-control p-2 rounded transition-colors ${showTimeline ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'}`}
           title="Activity Timeline"
         >
           <History className="h-4 w-4" />
+        </button>
+        
+        {/* Help / Tour Button */}
+        <button
+          onClick={() => setShowTour(true)}
+          className="floating-control p-2 rounded transition-colors hover:bg-secondary"
+          title="Show Tour"
+        >
+          <HelpCircle className="h-4 w-4" />
         </button>
         
         {/* Zoom to Fit Button */}
