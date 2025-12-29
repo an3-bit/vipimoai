@@ -72,6 +72,8 @@ export interface GeneratedPlot {
   coordinates: Coordinate[];
   isValid: boolean;
   overlapPercent: number;
+  isTruncated?: boolean;
+  truncatedArea?: number;
 }
 
 export interface SubdivisionStats {
@@ -89,20 +91,28 @@ export interface AccessEdgeConfig {
   roadWidth: number;
 }
 
+export interface RoadSegment {
+  type: 'spine' | 'rib' | 'culdesac';
+  coordinates: Coordinate[];
+  width: number;
+}
+
 /**
- * Generate plot grid with proper road width subtraction and riparian collision detection
+ * SPINE & RIBS ALGORITHM ("Comb" Layout)
  * 
- * Road Layout Strategy:
- * - Access roads run perpendicular to plot depth (between rows of back-to-back plots)
- * - Plots are arranged in pairs (back-to-back) with road access from front
- * - Full road width is subtracted between every 2 rows of plots
- * - If accessEdges are provided, plots on those edges are placed directly against the boundary
+ * Layout Strategy:
+ * 1. Access Edge: Where vehicles enter (user-selected or default South)
+ * 2. Spine Road: 12m main road running perpendicular from access edge into land
+ * 3. Rib Roads: 9m roads branching off spine every ~60m (2 back-to-back plots)
+ * 4. Double-Loaded: Plots face rib roads on both sides (no wasted backs)
+ * 5. Cul-de-sacs: Dead-end roads get 15m turning heads (no ring roads)
+ * 6. Truncation: 3m corner clips at intersections
  */
 export function generatePlotGrid(
   parcel: { lat: number; lng: number }[],
   plotWidth: number = 15.24, // 50ft in meters
   plotDepth: number = 30.48, // 100ft in meters
-  roadWidth: number = 9,
+  roadWidth: number = 9,     // Rib road width
   riparianBuffer: Coordinate[] = [],
   accessEdges: AccessEdgeConfig[] = []
 ): GeneratedPlot[] {
@@ -117,131 +127,253 @@ export function generatePlotGrid(
   const latDegPerMeter = 1 / 111320;
   const lngDegPerMeter = 1 / (111320 * Math.cos(minLat * Math.PI / 180));
 
+  // Road widths
+  const spineWidth = 12; // Main access spine
+  const ribWidth = roadWidth; // Branch roads
+  const truncation = 3; // Corner truncation at intersections
+
   // Convert dimensions to degrees
   const plotWidthDeg = plotWidth * lngDegPerMeter;
   const plotDepthDeg = plotDepth * latDegPerMeter;
-  const roadWidthDegLat = roadWidth * latDegPerMeter; // Road runs East-West
-  const roadWidthDegLng = roadWidth * lngDegPerMeter; // Road runs North-South
+  const spineWidthDeg = spineWidth * lngDegPerMeter;
+  const ribWidthDeg = ribWidth * latDegPerMeter;
+  const truncationDeg = truncation * lngDegPerMeter;
   
-  // Perimeter setback (typically 3m in Kenya for boundary)
-  const perimeterSetback = 3; // meters
+  // Perimeter setback (3m boundary buffer for fencing)
+  const perimeterSetback = 3;
   const setbackLat = perimeterSetback * latDegPerMeter;
   const setbackLng = perimeterSetback * lngDegPerMeter;
 
-  // Determine which edges have existing access roads
-  // Edge 0: South (minLat), Edge 1: East (maxLng), Edge 2: North (maxLat), Edge 3: West (minLng)
-  const hasAccessSouth = accessEdges.some(e => e.edgeIndex === 0);
-  const hasAccessEast = accessEdges.some(e => e.edgeIndex === 1);
-  const hasAccessNorth = accessEdges.some(e => e.edgeIndex === 2);
-  const hasAccessWest = accessEdges.some(e => e.edgeIndex === 3);
+  // Determine access edge (default: South edge = 0)
+  const primaryAccessEdge = accessEdges.length > 0 ? accessEdges[0].edgeIndex : 0;
+  
+  // Edge definitions: 0=South, 1=East, 2=North, 3=West
+  const hasAccessSouth = primaryAccessEdge === 0;
+  const hasAccessNorth = primaryAccessEdge === 2;
+  const hasAccessWest = primaryAccessEdge === 3;
+  const hasAccessEast = primaryAccessEdge === 1;
 
-  // Calculate usable area - no setback on access road edges
+  // Calculate usable bounds with setbacks (except on access edge)
   const usableMinLat = hasAccessSouth ? minLat : minLat + setbackLat;
   const usableMaxLat = hasAccessNorth ? maxLat : maxLat - setbackLat;
   const usableMinLng = hasAccessWest ? minLng : minLng + setbackLng;
   const usableMaxLng = hasAccessEast ? maxLng : maxLng - setbackLng;
   
-  // Calculate parcel dimensions in meters
-  const parcelWidthM = (maxLng - minLng) / lngDegPerMeter;
-  const parcelDepthM = (maxLat - minLat) / latDegPerMeter;
-  
-  // Calculate effective setbacks for calculations
-  const effectiveSouthSetback = hasAccessSouth ? 0 : perimeterSetback;
-  const effectiveNorthSetback = hasAccessNorth ? 0 : perimeterSetback;
-  const effectiveWestSetback = hasAccessWest ? 0 : perimeterSetback;
-  const effectiveEastSetback = hasAccessEast ? 0 : perimeterSetback;
-  
-  // Calculate usable dimensions
-  const usableDepth = parcelDepthM - effectiveSouthSetback - effectiveNorthSetback;
-  const usableWidth = parcelWidthM - effectiveWestSetback - effectiveEastSetback;
-  
-  // Determine if we need internal vertical road (only if no west/east access)
-  const needsVerticalRoad = !hasAccessWest && !hasAccessEast;
-  const verticalRoadWidth = needsVerticalRoad ? roadWidth : 0;
-  
-  // For width: plots side by side with small gap (1m) for fencing/boundary
-  const plotSpacing = 1; // 1m gap between plots in a row
-  const plotWithSpacing = plotWidth + plotSpacing;
-  const effectiveWidth = usableWidth - verticalRoadWidth;
-  const plotsPerRow = Math.floor(effectiveWidth / plotWithSpacing);
-  
-  // Determine if first row needs road (only if no south access)
-  const firstRowNeedsRoad = !hasAccessSouth;
-  
-  // Calculate how many plots fit with proper road spacing
-  // If south edge has access, first row of plots goes directly to boundary
-  // Layout with access: [PLOT-frontage][PLOT back-to-back][ROAD][PLOT][PLOT back-to-back]...
-  // Layout without access: [ROAD][PLOT][PLOT back-to-back][ROAD]...
-  
-  let availableDepth = usableDepth;
-  let plotRows: { startLat: number; isFrontRow: boolean }[] = [];
-  
-  // First: Handle the front row if there's access on south edge
-  if (hasAccessSouth) {
-    // Front row placed directly against south boundary (no road surrender)
-    plotRows.push({ startLat: usableMinLat, isFrontRow: true });
-    // Second row back-to-back with front row
-    plotRows.push({ startLat: usableMinLat + plotDepth * latDegPerMeter, isFrontRow: false });
-    availableDepth -= (2 * plotDepth);
-  }
-  
-  // Calculate remaining blocks (each block = road + 2 back-to-back plots)
-  const blockDepth = roadWidth + (2 * plotDepth);
-  const remainingBlocks = Math.floor(availableDepth / blockDepth);
-  
-  // Starting position for remaining blocks
-  let currentDepthPosition = hasAccessSouth ? (2 * plotDepth) : 0;
-  
-  for (let block = 0; block < remainingBlocks; block++) {
-    // Add road at start of block
-    currentDepthPosition += roadWidth;
-    
-    // First row of block
-    plotRows.push({ 
-      startLat: usableMinLat + (currentDepthPosition * latDegPerMeter), 
-      isFrontRow: false 
-    });
-    currentDepthPosition += plotDepth;
-    
-    // Second row (back-to-back)
-    plotRows.push({ 
-      startLat: usableMinLat + (currentDepthPosition * latDegPerMeter), 
-      isFrontRow: false 
-    });
-    currentDepthPosition += plotDepth;
-  }
-  
-  if (plotsPerRow <= 0 || plotRows.length === 0) {
-    return plots;
-  }
+  // Parcel dimensions in meters
+  const parcelWidthM = (usableMaxLng - usableMinLng) / lngDegPerMeter;
+  const parcelDepthM = (usableMaxLat - usableMinLat) / latDegPerMeter;
 
-  // Generate plots for each row
-  for (const row of plotRows) {
-    // Start position for this row
-    let currentLng = usableMinLng + (verticalRoadWidth * lngDegPerMeter);
+  // SPINE ROAD: Runs perpendicular from access edge into land
+  // For South/North access: Spine runs North-South (vertical), centered horizontally
+  // For East/West access: Spine runs East-West (horizontal), centered vertically
+  
+  const isVerticalSpine = hasAccessSouth || hasAccessNorth;
+  
+  if (isVerticalSpine) {
+    // Spine runs North-South from access edge
+    // Position spine at center of parcel width
+    const spineCenterLng = usableMinLng + (usableMaxLng - usableMinLng) / 2;
+    const spineLeftLng = spineCenterLng - (spineWidthDeg / 2);
+    const spineRightLng = spineCenterLng + (spineWidthDeg / 2);
     
-    for (let col = 0; col < plotsPerRow; col++) {
-      const plotCoords: Coordinate[] = [
-        { lat: row.startLat, lng: currentLng },
-        { lat: row.startLat, lng: currentLng + plotWidthDeg },
-        { lat: row.startLat + plotDepthDeg, lng: currentLng + plotWidthDeg },
-        { lat: row.startLat + plotDepthDeg, lng: currentLng },
-      ];
+    // Calculate rib spacing (every 2 back-to-back plots = ~60m)
+    const ribSpacing = (2 * plotDepth) + ribWidth; // Two plots + road
+    const ribSpacingDeg = ribSpacing * latDegPerMeter;
+    
+    // Generate plots on BOTH sides of spine
+    const sides: ('left' | 'right')[] = ['left', 'right'];
+    
+    for (const side of sides) {
+      // Calculate available width on this side
+      const sideStartLng = side === 'left' ? usableMinLng : spineRightLng;
+      const sideEndLng = side === 'left' ? spineLeftLng : usableMaxLng;
+      const sideWidthDeg = sideEndLng - sideStartLng;
+      const sideWidthM = sideWidthDeg / lngDegPerMeter;
       
-      // Check for riparian overlap
-      let isValid = true;
-      let overlapPercent = 0;
+      // How many plots fit across this side?
+      const plotsAcross = Math.floor(sideWidthM / plotWidth);
+      if (plotsAcross <= 0) continue;
       
-      if (riparianBuffer.length >= 3) {
-        const overlaps = checkPlotRiparianOverlap(plotCoords, riparianBuffer);
-        if (overlaps) {
-          isValid = false;
-          overlapPercent = calculateOverlapPercentage(plotCoords, riparianBuffer);
-        }
+      // Generate rib roads and plots
+      let currentLat = hasAccessSouth ? usableMinLat : usableMaxLat;
+      const direction = hasAccessSouth ? 1 : -1; // Move up from south, down from north
+      
+      // First row of plots directly faces the access road (frontage)
+      for (let col = 0; col < plotsAcross; col++) {
+        const plotLng = side === 'left' 
+          ? sideEndLng - ((col + 1) * plotWidthDeg) - (truncationDeg * (col === 0 ? 1 : 0))
+          : sideStartLng + (col * plotWidthDeg) + (truncationDeg * (col === 0 ? 1 : 0));
+        
+        const isTruncated = col === 0; // First plot near spine is truncated
+        
+        const plotCoords: Coordinate[] = hasAccessSouth ? [
+          { lat: currentLat, lng: plotLng },
+          { lat: currentLat, lng: plotLng + plotWidthDeg },
+          { lat: currentLat + plotDepthDeg, lng: plotLng + plotWidthDeg },
+          { lat: currentLat + plotDepthDeg, lng: plotLng },
+        ] : [
+          { lat: currentLat - plotDepthDeg, lng: plotLng },
+          { lat: currentLat - plotDepthDeg, lng: plotLng + plotWidthDeg },
+          { lat: currentLat, lng: plotLng + plotWidthDeg },
+          { lat: currentLat, lng: plotLng },
+        ];
+        
+        const { isValid, overlapPercent } = checkRiparianValidity(plotCoords, riparianBuffer);
+        plots.push({ 
+          coordinates: plotCoords, 
+          isValid, 
+          overlapPercent,
+          isTruncated,
+          truncatedArea: isTruncated ? truncation * truncation : 0
+        });
       }
       
-      plots.push({ coordinates: plotCoords, isValid, overlapPercent });
-      currentLng += plotWidthDeg + (plotSpacing * lngDegPerMeter);
+      // Move past first row
+      currentLat += direction * plotDepthDeg;
+      
+      // Generate remaining rows in back-to-back pairs with rib roads
+      let rowCount = 1;
+      const maxDepth = hasAccessSouth ? usableMaxLat : usableMinLat;
+      
+      while (hasAccessSouth ? (currentLat < maxDepth - plotDepthDeg) : (currentLat > maxDepth + plotDepthDeg)) {
+        const isBackToBackRow = rowCount % 2 === 1;
+        
+        if (!isBackToBackRow) {
+          // Add rib road gap before this row
+          currentLat += direction * ribWidthDeg;
+        }
+        
+        // Generate plots in this row
+        for (let col = 0; col < plotsAcross; col++) {
+          const plotLng = side === 'left' 
+            ? sideEndLng - ((col + 1) * plotWidthDeg) - (truncationDeg * (col === 0 && !isBackToBackRow ? 1 : 0))
+            : sideStartLng + (col * plotWidthDeg) + (truncationDeg * (col === 0 && !isBackToBackRow ? 1 : 0));
+          
+          const isTruncated = col === 0 && !isBackToBackRow;
+          
+          const plotCoords: Coordinate[] = hasAccessSouth ? [
+            { lat: currentLat, lng: plotLng },
+            { lat: currentLat, lng: plotLng + plotWidthDeg },
+            { lat: currentLat + plotDepthDeg, lng: plotLng + plotWidthDeg },
+            { lat: currentLat + plotDepthDeg, lng: plotLng },
+          ] : [
+            { lat: currentLat - plotDepthDeg, lng: plotLng },
+            { lat: currentLat - plotDepthDeg, lng: plotLng + plotWidthDeg },
+            { lat: currentLat, lng: plotLng + plotWidthDeg },
+            { lat: currentLat, lng: plotLng },
+          ];
+          
+          const { isValid, overlapPercent } = checkRiparianValidity(plotCoords, riparianBuffer);
+          plots.push({ 
+            coordinates: plotCoords, 
+            isValid, 
+            overlapPercent,
+            isTruncated,
+            truncatedArea: isTruncated ? truncation * truncation : 0
+          });
+        }
+        
+        currentLat += direction * plotDepthDeg;
+        rowCount++;
+      }
+    }
+  } else {
+    // Spine runs East-West (horizontal access from East or West)
+    const spineCenterLat = usableMinLat + (usableMaxLat - usableMinLat) / 2;
+    const spineBottomLat = spineCenterLat - (spineWidth * latDegPerMeter / 2);
+    const spineTopLat = spineCenterLat + (spineWidth * latDegPerMeter / 2);
+    
+    // Generate plots above and below spine
+    const sides: ('above' | 'below')[] = ['above', 'below'];
+    
+    for (const side of sides) {
+      const sideStartLat = side === 'below' ? usableMinLat : spineTopLat;
+      const sideEndLat = side === 'below' ? spineBottomLat : usableMaxLat;
+      const sideHeightDeg = Math.abs(sideEndLat - sideStartLat);
+      const sideHeightM = sideHeightDeg / latDegPerMeter;
+      
+      const plotsAcross = Math.floor(sideHeightM / plotDepth);
+      if (plotsAcross <= 0) continue;
+      
+      // Generate from access edge
+      let currentLng = hasAccessWest ? usableMinLng : usableMaxLng;
+      const direction = hasAccessWest ? 1 : -1;
+      
+      // First row directly faces access
+      for (let row = 0; row < plotsAcross; row++) {
+        const plotLat = side === 'below' 
+          ? sideEndLat - ((row + 1) * plotDepthDeg)
+          : sideStartLat + (row * plotDepthDeg);
+        
+        const isTruncated = row === 0;
+        
+        const plotCoords: Coordinate[] = hasAccessWest ? [
+          { lat: plotLat, lng: currentLng },
+          { lat: plotLat, lng: currentLng + plotWidthDeg },
+          { lat: plotLat + plotDepthDeg, lng: currentLng + plotWidthDeg },
+          { lat: plotLat + plotDepthDeg, lng: currentLng },
+        ] : [
+          { lat: plotLat, lng: currentLng - plotWidthDeg },
+          { lat: plotLat, lng: currentLng },
+          { lat: plotLat + plotDepthDeg, lng: currentLng },
+          { lat: plotLat + plotDepthDeg, lng: currentLng - plotWidthDeg },
+        ];
+        
+        const { isValid, overlapPercent } = checkRiparianValidity(plotCoords, riparianBuffer);
+        plots.push({ 
+          coordinates: plotCoords, 
+          isValid, 
+          overlapPercent,
+          isTruncated,
+          truncatedArea: isTruncated ? truncation * truncation : 0
+        });
+      }
+      
+      currentLng += direction * plotWidthDeg;
+      
+      // Remaining columns with rib roads
+      let colCount = 1;
+      const maxWidth = hasAccessWest ? usableMaxLng : usableMinLng;
+      
+      while (hasAccessWest ? (currentLng < maxWidth - plotWidthDeg) : (currentLng > maxWidth + plotWidthDeg)) {
+        const isBackToBackCol = colCount % 2 === 1;
+        
+        if (!isBackToBackCol) {
+          currentLng += direction * ribWidth * lngDegPerMeter;
+        }
+        
+        for (let row = 0; row < plotsAcross; row++) {
+          const plotLat = side === 'below' 
+            ? sideEndLat - ((row + 1) * plotDepthDeg)
+            : sideStartLat + (row * plotDepthDeg);
+          
+          const isTruncated = row === 0 && !isBackToBackCol;
+          
+          const plotCoords: Coordinate[] = hasAccessWest ? [
+            { lat: plotLat, lng: currentLng },
+            { lat: plotLat, lng: currentLng + plotWidthDeg },
+            { lat: plotLat + plotDepthDeg, lng: currentLng + plotWidthDeg },
+            { lat: plotLat + plotDepthDeg, lng: currentLng },
+          ] : [
+            { lat: plotLat, lng: currentLng - plotWidthDeg },
+            { lat: plotLat, lng: currentLng },
+            { lat: plotLat + plotDepthDeg, lng: currentLng },
+            { lat: plotLat + plotDepthDeg, lng: currentLng - plotWidthDeg },
+          ];
+          
+          const { isValid, overlapPercent } = checkRiparianValidity(plotCoords, riparianBuffer);
+          plots.push({ 
+            coordinates: plotCoords, 
+            isValid, 
+            overlapPercent,
+            isTruncated,
+            truncatedArea: isTruncated ? truncation * truncation : 0
+          });
+        }
+        
+        currentLng += direction * plotWidthDeg;
+        colCount++;
+      }
     }
   }
 
@@ -249,7 +381,155 @@ export function generatePlotGrid(
 }
 
 /**
- * Calculate subdivision statistics with proper road area accounting
+ * Helper: Check riparian buffer validity
+ */
+function checkRiparianValidity(
+  plotCoords: Coordinate[], 
+  riparianBuffer: Coordinate[]
+): { isValid: boolean; overlapPercent: number } {
+  if (riparianBuffer.length < 3) {
+    return { isValid: true, overlapPercent: 0 };
+  }
+  
+  const overlaps = checkPlotRiparianOverlap(plotCoords, riparianBuffer);
+  if (overlaps) {
+    return { 
+      isValid: false, 
+      overlapPercent: calculateOverlapPercentage(plotCoords, riparianBuffer) 
+    };
+  }
+  return { isValid: true, overlapPercent: 0 };
+}
+
+/**
+ * Generate road network for visualization
+ */
+export function generateRoadNetwork(
+  parcel: { lat: number; lng: number }[],
+  plotDepth: number = 30.48,
+  roadWidth: number = 9,
+  accessEdges: AccessEdgeConfig[] = []
+): RoadSegment[] {
+  const roads: RoadSegment[] = [];
+  
+  const minLat = Math.min(...parcel.map(p => p.lat));
+  const maxLat = Math.max(...parcel.map(p => p.lat));
+  const minLng = Math.min(...parcel.map(p => p.lng));
+  const maxLng = Math.max(...parcel.map(p => p.lng));
+
+  const latDegPerMeter = 1 / 111320;
+  const lngDegPerMeter = 1 / (111320 * Math.cos(minLat * Math.PI / 180));
+
+  const spineWidth = 12;
+  const perimeterSetback = 3;
+  const setbackLat = perimeterSetback * latDegPerMeter;
+  const setbackLng = perimeterSetback * lngDegPerMeter;
+
+  const primaryAccessEdge = accessEdges.length > 0 ? accessEdges[0].edgeIndex : 0;
+  const isVerticalSpine = primaryAccessEdge === 0 || primaryAccessEdge === 2;
+
+  const usableMinLat = minLat + setbackLat;
+  const usableMaxLat = maxLat - setbackLat;
+  const usableMinLng = minLng + setbackLng;
+  const usableMaxLng = maxLng - setbackLng;
+
+  if (isVerticalSpine) {
+    // Vertical spine road
+    const spineCenterLng = usableMinLng + (usableMaxLng - usableMinLng) / 2;
+    const spineHalfWidth = (spineWidth * lngDegPerMeter) / 2;
+    
+    roads.push({
+      type: 'spine',
+      width: spineWidth,
+      coordinates: [
+        { lat: usableMinLat, lng: spineCenterLng - spineHalfWidth },
+        { lat: usableMinLat, lng: spineCenterLng + spineHalfWidth },
+        { lat: usableMaxLat, lng: spineCenterLng + spineHalfWidth },
+        { lat: usableMaxLat, lng: spineCenterLng - spineHalfWidth },
+      ]
+    });
+
+    // Rib roads
+    const ribSpacing = (2 * plotDepth) + roadWidth;
+    let currentLat = usableMinLat + (ribSpacing * latDegPerMeter);
+    const ribHalfWidth = (roadWidth * latDegPerMeter) / 2;
+
+    while (currentLat < usableMaxLat - (plotDepth * latDegPerMeter)) {
+      // Left rib
+      roads.push({
+        type: 'rib',
+        width: roadWidth,
+        coordinates: [
+          { lat: currentLat - ribHalfWidth, lng: usableMinLng },
+          { lat: currentLat - ribHalfWidth, lng: spineCenterLng - spineHalfWidth },
+          { lat: currentLat + ribHalfWidth, lng: spineCenterLng - spineHalfWidth },
+          { lat: currentLat + ribHalfWidth, lng: usableMinLng },
+        ]
+      });
+
+      // Right rib
+      roads.push({
+        type: 'rib',
+        width: roadWidth,
+        coordinates: [
+          { lat: currentLat - ribHalfWidth, lng: spineCenterLng + spineHalfWidth },
+          { lat: currentLat - ribHalfWidth, lng: usableMaxLng },
+          { lat: currentLat + ribHalfWidth, lng: usableMaxLng },
+          { lat: currentLat + ribHalfWidth, lng: spineCenterLng + spineHalfWidth },
+        ]
+      });
+
+      // Cul-de-sacs at rib ends
+      const culdesacRadius = 15 * lngDegPerMeter;
+      roads.push({
+        type: 'culdesac',
+        width: 15,
+        coordinates: generateCircleCoords(
+          { lat: currentLat, lng: usableMinLng },
+          culdesacRadius / 2,
+          latDegPerMeter
+        )
+      });
+
+      roads.push({
+        type: 'culdesac',
+        width: 15,
+        coordinates: generateCircleCoords(
+          { lat: currentLat, lng: usableMaxLng },
+          culdesacRadius / 2,
+          latDegPerMeter
+        )
+      });
+
+      currentLat += ribSpacing * latDegPerMeter;
+    }
+  }
+
+  return roads;
+}
+
+/**
+ * Helper: Generate circle coordinates for cul-de-sac
+ */
+function generateCircleCoords(
+  center: Coordinate, 
+  radius: number, 
+  latDegPerMeter: number
+): Coordinate[] {
+  const coords: Coordinate[] = [];
+  const segments = 12;
+  for (let i = 0; i < segments; i++) {
+    const angle = (2 * Math.PI * i) / segments;
+    coords.push({
+      lat: center.lat + (Math.sin(angle) * radius * latDegPerMeter * 111320),
+      lng: center.lng + (Math.cos(angle) * radius)
+    });
+  }
+  return coords;
+}
+
+/**
+ * Calculate subdivision statistics with truncation accounting
  */
 export function calculateSubdivisionStats(
   parcelAreaSqm: number,
@@ -261,27 +541,29 @@ export function calculateSubdivisionStats(
   const validPlots = plots.filter(p => p.isValid);
   const invalidPlots = plots.filter(p => !p.isValid);
   const plotAreaSqm = plotWidth * plotDepth;
-  const totalPlotAreaSqm = validPlots.length * plotAreaSqm;
   
-  // Estimate road area based on layout
-  // Horizontal roads: one road per 2 rows of plots
-  // Vertical roads: one access road on the side
+  // Account for truncated areas
+  const truncatedArea = plots.reduce((sum, p) => sum + (p.truncatedArea || 0), 0);
+  const totalPlotAreaSqm = (validPlots.length * plotAreaSqm) - truncatedArea;
+  
+  // Road area: Spine (12m) + Ribs (9m) - more efficient than ring roads
   const numRows = Math.ceil(plots.length / Math.max(1, Math.floor(Math.sqrt(plots.length))));
-  const numHorizontalRoads = Math.ceil(numRows / 2);
+  const numRibs = Math.floor(numRows / 2);
   const plotsPerRow = plots.length > 0 ? Math.ceil(plots.length / Math.max(1, numRows)) : 0;
   
-  // Approximate road dimensions
-  const horizontalRoadLength = plotsPerRow * plotWidth;
-  const verticalRoadLength = numRows * plotDepth;
+  // Spine road length (full depth)
+  const spineLength = numRows * plotDepth;
+  const spineArea = 12 * spineLength;
   
-  const horizontalRoadArea = numHorizontalRoads * roadWidth * horizontalRoadLength;
-  const verticalRoadArea = roadWidth * verticalRoadLength;
-  const roadAreaSqm = horizontalRoadArea + verticalRoadArea;
+  // Rib roads (half width each side)
+  const ribLength = (plotsPerRow * plotWidth) / 2;
+  const ribArea = numRibs * 2 * roadWidth * ribLength;
   
-  // Calculate efficiency: (sellable plot area) / (total parcel area)
+  const roadAreaSqm = spineArea + ribArea;
+  
+  // Efficiency: sellable area / total area
   const efficiency = parcelAreaSqm > 0 ? (totalPlotAreaSqm / parcelAreaSqm) * 100 : 0;
   
-  // Unused area = total - plots - roads - riparian losses
   const riparianLoss = invalidPlots.length * plotAreaSqm;
   const unusedAreaSqm = Math.max(0, parcelAreaSqm - totalPlotAreaSqm - roadAreaSqm - riparianLoss);
   
