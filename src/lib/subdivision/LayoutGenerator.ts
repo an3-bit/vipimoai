@@ -1,55 +1,67 @@
 /**
  * LayoutGenerator - "The Brain"
- * Implements the Spine & Ribs (Comb) algorithm for efficient
- * double-loaded road layouts
+ * Implements the Smart Mesh algorithm for efficient subdivision:
+ * - Double-loaded road layouts (Spine & Ribs)
+ * - Residual plot handling (no gaps!)
+ * - Constraint-aware mesh slicing
+ * - Plot merging for undersized parcels
  */
 
 import * as turf from '@turf/turf';
-import type { Feature, Polygon, LineString, Position, FeatureCollection, Point } from 'geojson';
+import type { Feature, Polygon, LineString, Position, FeatureCollection, MultiPolygon } from 'geojson';
 import type { FrontageResult, ParcelEdge } from './FrontageAnalyzer';
 
 export interface PlotConfig {
   targetWidth: number;      // Target plot width in meters (e.g., 15m)
   targetDepth: number;      // Target plot depth in meters (e.g., 30m)
   minAreaRatio: number;     // Minimum area ratio to keep plot (e.g., 0.8 = 80%)
+  minResidualArea: number;  // Minimum area for residual plot before merge (sqm)
   accessRoadWidth: number;  // Internal road width (e.g., 9m)
   spineRoadWidth: number;   // Main spine road width (e.g., 12m)
   truncationSize: number;   // Corner truncation at intersections (e.g., 3m)
+  culDeSacRadius: number;   // Turning head radius (e.g., 15m)
 }
 
 export interface GeneratedPlot {
   id: string;
   plotNumber: number;
+  label: string; // e.g., "Plot 1" or "Residual A"
   geometry: Feature<Polygon>;
   area: number;
   width: number;
   depth: number;
   isPartial: boolean;
+  isResidual: boolean;
   isTruncated: boolean;
   truncatedArea: number;
   row: number;
   column: number;
   facingRoad: 'frontage' | 'internal' | 'spine';
+  mergedFrom?: string[]; // IDs of plots merged into this one
 }
 
 export interface RoadSegment {
   id: string;
   type: 'spine' | 'rib' | 'cul-de-sac';
-  geometry: Feature<LineString>;
+  geometry: Feature<LineString | Polygon>;
   width: number;
-  servesPlots: string[]; // Plot IDs served by this road
+  servesPlots: string[];
 }
 
 export interface LayoutResult {
   plots: GeneratedPlot[];
   roads: RoadSegment[];
   spine: Feature<LineString> | null;
+  residuals: GeneratedPlot[];
   statistics: {
     totalPlots: number;
+    standardPlots: number;
+    residualPlots: number;
+    mergedPlots: number;
     totalArea: number;
     plotArea: number;
     roadArea: number;
-    efficiency: number; // Plot area / Total area
+    efficiency: number;
     averagePlotSize: number;
     partialPlots: number;
   };
@@ -59,10 +71,26 @@ const DEFAULT_CONFIG: PlotConfig = {
   targetWidth: 15,
   targetDepth: 30,
   minAreaRatio: 0.8,
+  minResidualArea: 200, // 0.02 Ha = 200 sqm
   accessRoadWidth: 9,
   spineRoadWidth: 12,
-  truncationSize: 3
+  truncationSize: 3,
+  culDeSacRadius: 15
 };
+
+/**
+ * Converts meters to approximate degrees at given latitude
+ */
+function metersToDegrees(meters: number, latitude: number = 0): number {
+  return meters / (111320 * Math.cos((latitude * Math.PI) / 180));
+}
+
+/**
+ * Converts degrees to meters at given latitude
+ */
+function degreesToMeters(degrees: number, latitude: number = 0): number {
+  return degrees * 111320 * Math.cos((latitude * Math.PI) / 180);
+}
 
 /**
  * Rotates coordinates around a center point
@@ -90,14 +118,21 @@ function rotateCoordinates(
  * Creates a bounding box aligned to a specific angle
  */
 function getAlignedBoundingBox(
-  parcel: Feature<Polygon>,
+  parcel: Feature<Polygon | MultiPolygon>,
   alignmentAngle: number
 ): { minX: number; maxX: number; minY: number; maxY: number; center: Position } {
   const centroid = turf.centroid(parcel);
   const center = centroid.geometry.coordinates;
   
-  // Rotate parcel to align with grid
-  const coords = parcel.geometry.coordinates[0];
+  // Get all coordinates from polygon or multipolygon
+  let coords: Position[];
+  if (parcel.geometry.type === 'MultiPolygon') {
+    coords = parcel.geometry.coordinates.flat(2);
+  } else {
+    coords = parcel.geometry.coordinates[0];
+  }
+  
+  // Rotate coordinates to align with grid
   const rotated = rotateCoordinates(coords, -alignmentAngle, center);
   
   let minX = Infinity, maxX = -Infinity;
@@ -114,14 +149,7 @@ function getAlignedBoundingBox(
 }
 
 /**
- * Converts meters to approximate degrees (for small distances)
- */
-function metersToDegrees(meters: number, latitude: number = 0): number {
-  return meters / (111320 * Math.cos((latitude * Math.PI) / 180));
-}
-
-/**
- * Creates a strip (band) of land
+ * Creates a rectangular strip of land
  */
 function createStrip(
   startY: number,
@@ -139,121 +167,106 @@ function createStrip(
     [minX, startY]
   ];
   
-  // Rotate back to original orientation
   const rotatedBack = rotateCoordinates(coords, alignmentAngle, center);
-  
   return turf.polygon([rotatedBack]);
 }
 
 /**
- * Slices a strip into individual plots (Bin Packing)
+ * Creates a single plot rectangle
  */
-function sliceStripIntoPlots(
-  strip: Feature<Polygon>,
-  parcel: Feature<Polygon>,
-  plotWidth: number,
-  row: number,
-  config: PlotConfig,
-  facingRoad: 'frontage' | 'internal' | 'spine'
-): GeneratedPlot[] {
-  const plots: GeneratedPlot[] = [];
+function createPlotRectangle(
+  startX: number,
+  endX: number,
+  startY: number,
+  endY: number,
+  center: Position,
+  alignmentAngle: number
+): Feature<Polygon> {
+  const coords: Position[] = [
+    [startX, startY],
+    [endX, startY],
+    [endX, endY],
+    [startX, endY],
+    [startX, startY]
+  ];
   
-  // Get strip bounds
-  const bbox = turf.bbox(strip);
-  const stripWidth = turf.distance(
-    turf.point([bbox[0], bbox[1]]),
-    turf.point([bbox[2], bbox[1]]),
-    { units: 'meters' }
-  );
-  
-  const numPlots = Math.floor(stripWidth / plotWidth);
-  const remainder = stripWidth - (numPlots * plotWidth);
-  
-  // Calculate centroid for rotation reference
-  const centroid = turf.centroid(strip);
-  const stripCoords = strip.geometry.coordinates[0];
-  
-  // Get the bearing of the strip's first edge
-  const bearing = turf.bearing(
-    turf.point(stripCoords[0]),
-    turf.point(stripCoords[1])
-  );
-  
-  for (let i = 0; i < numPlots; i++) {
-    try {
-      // Create plot rectangle along the strip
-      const plotStart = turf.along(
-        turf.lineString([stripCoords[0], stripCoords[1]]),
-        i * plotWidth,
-        { units: 'meters' }
-      );
-      
-      const plotEnd = turf.along(
-        turf.lineString([stripCoords[0], stripCoords[1]]),
-        (i + 1) * plotWidth,
-        { units: 'meters' }
-      );
-      
-      // Calculate perpendicular direction for depth
-      const perpBearing = bearing + 90;
-      const depth = config.targetDepth;
-      
-      const corner1 = plotStart.geometry.coordinates;
-      const corner2 = plotEnd.geometry.coordinates;
-      const corner3 = turf.destination(turf.point(corner2), depth / 1000, perpBearing).geometry.coordinates;
-      const corner4 = turf.destination(turf.point(corner1), depth / 1000, perpBearing).geometry.coordinates;
-      
-      let plotPolygon = turf.polygon([[corner1, corner2, corner3, corner4, corner1]]);
-      
-      // Clip plot against parcel boundary
-      const clipped = turf.intersect(turf.featureCollection([plotPolygon, parcel]));
-      
-      if (clipped && clipped.geometry.type === 'Polygon') {
-        plotPolygon = clipped as Feature<Polygon>;
-        const area = turf.area(plotPolygon);
-        const targetArea = plotWidth * depth;
-        const areaRatio = area / targetArea;
-        
-        // Only keep if meets minimum area threshold
-        if (areaRatio >= config.minAreaRatio) {
-          plots.push({
-            id: `plot-${row}-${i}`,
-            plotNumber: plots.length + 1,
-            geometry: plotPolygon,
-            area,
-            width: plotWidth,
-            depth,
-            isPartial: areaRatio < 1,
-            isTruncated: false,
-            truncatedArea: 0,
-            row,
-            column: i,
-            facingRoad
-          });
-        }
-      }
-    } catch (e) {
-      // Skip invalid plot geometry
-      continue;
-    }
-  }
-  
-  return plots;
+  const rotatedBack = rotateCoordinates(coords, alignmentAngle, center);
+  return turf.polygon([rotatedBack]);
 }
 
 /**
- * Applies truncation to corner plots at intersections
+ * Clips a plot polygon against the developable area boundary
+ * Returns null if the result is invalid or too small
+ */
+function clipPlotToBoundary(
+  plot: Feature<Polygon>,
+  boundary: Feature<Polygon | MultiPolygon>
+): Feature<Polygon> | null {
+  try {
+    const intersection = turf.intersect(turf.featureCollection([plot, boundary as Feature<Polygon>]));
+    
+    if (!intersection) return null;
+    
+    // Handle multipolygon results - take largest piece
+    if (intersection.geometry.type === 'MultiPolygon') {
+      const polygons = intersection.geometry.coordinates.map(coords => 
+        turf.polygon(coords)
+      );
+      const largest = polygons.reduce((max, p) => 
+        turf.area(p) > turf.area(max) ? p : max
+      );
+      return largest;
+    }
+    
+    return intersection as Feature<Polygon>;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Generates a residual plot label (A, B, C, ...)
+ */
+function getResidualLabel(index: number): string {
+  return String.fromCharCode(65 + (index % 26)); // A, B, C, ...
+}
+
+/**
+ * Merges a small plot into its neighbor
+ */
+function mergePlots(
+  smallPlot: GeneratedPlot,
+  neighborPlot: GeneratedPlot
+): GeneratedPlot {
+  try {
+    const merged = turf.union(turf.featureCollection([smallPlot.geometry, neighborPlot.geometry]));
+    
+    if (merged && merged.geometry.type === 'Polygon') {
+      return {
+        ...neighborPlot,
+        geometry: merged as Feature<Polygon>,
+        area: turf.area(merged),
+        isPartial: true,
+        mergedFrom: [smallPlot.id, ...(neighborPlot.mergedFrom || [])]
+      };
+    }
+  } catch (e) {
+    // Return neighbor unchanged
+  }
+  
+  return neighborPlot;
+}
+
+/**
+ * Applies corner truncation to a plot at road intersections
  */
 function applyTruncation(
   plot: GeneratedPlot,
-  truncationSize: number,
-  isCorner: boolean
+  truncationSize: number
 ): GeneratedPlot {
-  if (!isCorner) return plot;
-  
   try {
-    // Simple truncation: buffer inward slightly at corners
-    const buffered = turf.buffer(plot.geometry, -truncationSize / 1000, { units: 'kilometers' });
+    // Create truncation by buffering inward
+    const buffered = turf.buffer(plot.geometry, -truncationSize / 2, { units: 'meters' });
     
     if (buffered && buffered.geometry.type === 'Polygon') {
       const truncatedArea = turf.area(plot.geometry) - turf.area(buffered);
@@ -267,7 +280,7 @@ function applyTruncation(
       };
     }
   } catch (e) {
-    // Return original if truncation fails
+    // Return original
   }
   
   return plot;
@@ -281,36 +294,35 @@ function createCulDeSac(
   bearing: number,
   radius: number = 15
 ): Feature<Polygon> {
-  const center = turf.destination(turf.point(roadEnd), radius / 1000, bearing);
-  return turf.circle(center.geometry.coordinates, radius / 1000, { units: 'kilometers' });
+  const center = turf.destination(turf.point(roadEnd), radius / 2000, bearing);
+  return turf.circle(center.geometry.coordinates, radius / 1000, { units: 'kilometers', steps: 32 });
 }
 
 /**
- * Creates the spine road running perpendicular from access edge
+ * Creates the spine road perpendicular from access edge
  */
 function createSpineRoad(
   frontage: FrontageResult,
-  parcel: Feature<Polygon>,
+  developableArea: Feature<Polygon | MultiPolygon>,
   config: PlotConfig
-): RoadSegment | null {
-  if (!frontage.primaryEdge) return null;
+): { road: RoadSegment | null; spine: Feature<LineString> | null } {
+  if (!frontage.primaryEdge) return { road: null, spine: null };
   
   const edge = frontage.primaryEdge;
   const midpoint = edge.midpoint;
   
-  // Calculate perpendicular bearing (into the parcel)
-  const edgeBearing = edge.bearing;
-  const spineBearing = edgeBearing + 90; // Perpendicular
+  // Perpendicular bearing into the parcel
+  const spineBearing = edge.bearing + 90;
   
-  // Find the furthest point in the parcel along the spine direction
-  const bbox = turf.bbox(parcel);
+  // Find max distance across parcel
+  const bbox = turf.bbox(developableArea);
   const maxDistance = turf.distance(
     turf.point([bbox[0], bbox[1]]),
     turf.point([bbox[2], bbox[3]]),
     { units: 'meters' }
-  );
+  ) * 1.5;
   
-  // Create spine line from frontage midpoint into parcel
+  // Create spine line
   const spineEnd = turf.destination(
     turf.point(midpoint),
     maxDistance / 1000,
@@ -319,28 +331,164 @@ function createSpineRoad(
   
   let spineLine = turf.lineString([midpoint, spineEnd.geometry.coordinates]);
   
-  // Clip spine to parcel boundary
+  // Clip to parcel boundary
   try {
-    const clipped = turf.lineIntersect(spineLine, turf.polygonToLine(parcel));
-    if (clipped.features.length >= 2) {
-      const points = clipped.features.map(f => f.geometry.coordinates);
-      spineLine = turf.lineString([midpoint, points[points.length - 1]]);
+    const parcelLine = turf.polygonToLine(developableArea);
+    const intersections = turf.lineIntersect(spineLine, parcelLine as Feature<LineString>);
+    
+    if (intersections.features.length > 0) {
+      // Find furthest intersection point
+      let maxDist = 0;
+      let furthestPoint = spineEnd.geometry.coordinates;
+      
+      for (const pt of intersections.features) {
+        const dist = turf.distance(turf.point(midpoint), pt, { units: 'meters' });
+        if (dist > maxDist) {
+          maxDist = dist;
+          furthestPoint = pt.geometry.coordinates;
+        }
+      }
+      
+      spineLine = turf.lineString([midpoint, furthestPoint]);
     }
   } catch (e) {
-    // Use original spine line
+    // Use original
   }
   
-  return {
+  const road: RoadSegment = {
     id: 'spine-main',
     type: 'spine',
     geometry: spineLine,
     width: config.spineRoadWidth,
     servesPlots: []
   };
+  
+  return { road, spine: spineLine };
 }
 
 /**
- * Main layout generation function - implements Spine & Ribs algorithm
+ * Slices a strip into individual plots using mesh slicing
+ */
+function sliceStripIntoPlots(
+  developableArea: Feature<Polygon | MultiPolygon>,
+  bbox: { minX: number; maxX: number; minY: number; maxY: number; center: Position },
+  startY: number,
+  endY: number,
+  plotWidth: number,
+  row: number,
+  config: PlotConfig,
+  facingRoad: 'frontage' | 'internal' | 'spine',
+  alignmentAngle: number,
+  centerLat: number
+): GeneratedPlot[] {
+  const plots: GeneratedPlot[] = [];
+  const plotWidthDeg = metersToDegrees(plotWidth, centerLat);
+  
+  let currentX = bbox.minX;
+  let column = 0;
+  
+  while (currentX < bbox.maxX) {
+    const nextX = currentX + plotWidthDeg;
+    
+    // Create plot rectangle
+    const plotRect = createPlotRectangle(
+      currentX,
+      Math.min(nextX, bbox.maxX),
+      startY,
+      endY,
+      bbox.center,
+      alignmentAngle
+    );
+    
+    // Clip against developable area
+    const clippedPlot = clipPlotToBoundary(plotRect, developableArea);
+    
+    if (clippedPlot) {
+      const area = turf.area(clippedPlot);
+      const targetArea = plotWidth * config.targetDepth;
+      const areaRatio = area / targetArea;
+      
+      // Calculate actual dimensions
+      const plotBbox = turf.bbox(clippedPlot);
+      const actualWidth = degreesToMeters(plotBbox[2] - plotBbox[0], centerLat);
+      const actualDepth = degreesToMeters(plotBbox[3] - plotBbox[1], centerLat);
+      
+      // Determine if this is a residual or standard plot
+      const isResidual = areaRatio < config.minAreaRatio;
+      
+      if (area >= config.minResidualArea) { // Keep if above minimum residual size
+        plots.push({
+          id: `plot-${row}-${column}`,
+          plotNumber: 0, // Will be assigned later
+          label: isResidual ? `Residual ${getResidualLabel(column)}` : `Plot ${column + 1}`,
+          geometry: clippedPlot,
+          area,
+          width: actualWidth,
+          depth: actualDepth,
+          isPartial: areaRatio < 1,
+          isResidual,
+          isTruncated: false,
+          truncatedArea: 0,
+          row,
+          column,
+          facingRoad
+        });
+      }
+      // If too small, it will be handled in merge step
+    }
+    
+    currentX = nextX;
+    column++;
+  }
+  
+  return plots;
+}
+
+/**
+ * Merges undersized residual plots with neighbors
+ */
+function mergeResidualPlots(
+  plots: GeneratedPlot[],
+  minArea: number
+): GeneratedPlot[] {
+  const result: GeneratedPlot[] = [];
+  const toMerge: GeneratedPlot[] = [];
+  
+  // Separate standard plots from tiny residuals
+  for (const plot of plots) {
+    if (plot.area < minArea && !plot.isResidual) {
+      toMerge.push(plot);
+    } else {
+      result.push(plot);
+    }
+  }
+  
+  // Merge tiny plots into neighbors
+  for (const small of toMerge) {
+    // Find adjacent neighbor in same row
+    const neighbor = result.find(p => 
+      p.row === small.row && 
+      Math.abs(p.column - small.column) === 1
+    );
+    
+    if (neighbor) {
+      const idx = result.indexOf(neighbor);
+      result[idx] = mergePlots(small, neighbor);
+    } else {
+      // Keep as residual if no neighbor
+      result.push({
+        ...small,
+        isResidual: true,
+        label: `Residual ${getResidualLabel(small.column)}`
+      });
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Main layout generation function - Smart Mesh Algorithm
  */
 export function generateLayout(
   parcel: Feature<Polygon>,
@@ -349,198 +497,234 @@ export function generateLayout(
 ): LayoutResult {
   const cfg: PlotConfig = { ...DEFAULT_CONFIG, ...config };
   
-  const plots: GeneratedPlot[] = [];
+  let plots: GeneratedPlot[] = [];
   const roads: RoadSegment[] = [];
+  const residuals: GeneratedPlot[] = [];
   
-  // Step A: Determine alignment from frontage analysis
+  // Use net developable area if available (after constraint subtraction)
+  const developableArea = frontage.netDevelopableArea || parcel;
   const alignmentAngle = frontage.alignmentAngle;
   
   // Get aligned bounding box
-  const bbox = getAlignedBoundingBox(parcel, alignmentAngle);
+  const bbox = getAlignedBoundingBox(developableArea, alignmentAngle);
   const parcelArea = turf.area(parcel);
+  const netArea = turf.area(developableArea);
   
-  // Step B: Generate the "Comb" pattern
-  // Pattern: Plot -> Plot -> Road -> Plot -> Plot -> Road ...
-  
-  const centroid = turf.centroid(parcel);
+  const centroid = turf.centroid(developableArea);
   const centerLat = centroid.geometry.coordinates[1];
   
-  // Convert dimensions to degrees for grid generation
+  // Convert dimensions to degrees
   const plotDepthDeg = metersToDegrees(cfg.targetDepth, centerLat);
   const roadWidthDeg = metersToDegrees(cfg.accessRoadWidth, centerLat);
-  const plotWidthDeg = metersToDegrees(cfg.targetWidth, centerLat);
+  const spineWidthDeg = metersToDegrees(cfg.spineRoadWidth, centerLat);
   
-  // Calculate strip pattern
-  const bandPattern = [
-    { type: 'plot' as const, depth: cfg.targetDepth },
-    { type: 'plot' as const, depth: cfg.targetDepth },
-    { type: 'road' as const, depth: cfg.accessRoadWidth }
-  ];
-  
-  // Calculate total depth available
-  const parcelDepth = (bbox.maxY - bbox.minY) * 111320; // Approximate meters
-  
+  let spine: Feature<LineString> | null = null;
   let currentY = bbox.minY;
-  let bandIndex = 0;
   let rowNumber = 0;
   let ribNumber = 0;
   
-  // Special case: Frontage row (no road buffer if PRIMARY_ACCESS)
-  if (frontage.status === 'PRIMARY_ACCESS' && frontage.primaryEdge) {
-    // First row of plots faces directly onto existing road
-    const frontageDepth = metersToDegrees(cfg.targetDepth, centerLat);
+  // Step 1: Handle access based on frontage analysis
+  if (frontage.status === 'PRIMARY_ACCESS') {
+    // Frontage row - plots face directly onto existing road (no buffer)
+    const stripPlots = sliceStripIntoPlots(
+      developableArea,
+      bbox,
+      currentY,
+      currentY + plotDepthDeg,
+      cfg.targetWidth,
+      rowNumber,
+      cfg,
+      'frontage',
+      alignmentAngle,
+      centerLat
+    );
     
-    try {
-      const frontageStrip = createStrip(
-        currentY,
-        currentY + frontageDepth,
-        bbox.minX,
-        bbox.maxX,
-        bbox.center,
-        alignmentAngle
-      );
-      
-      const frontageClipped = turf.intersect(turf.featureCollection([frontageStrip, parcel]));
-      
-      if (frontageClipped && frontageClipped.geometry.type === 'Polygon') {
-        const frontPlots = sliceStripIntoPlots(
-          frontageClipped as Feature<Polygon>,
-          parcel,
-          cfg.targetWidth,
-          rowNumber,
-          cfg,
-          'frontage'
-        );
-        plots.push(...frontPlots);
-        rowNumber++;
-      }
-    } catch (e) {
-      // Skip frontage strip on error
-    }
-    
-    currentY += frontageDepth;
+    plots.push(...stripPlots);
+    rowNumber++;
+    currentY += plotDepthDeg;
   } else {
-    // Landlocked: Create spine road first
-    const spineRoad = createSpineRoad(frontage, parcel, cfg);
-    if (spineRoad) {
-      roads.push(spineRoad);
+    // Landlocked - create spine road
+    const { road, spine: spineGeom } = createSpineRoad(frontage, developableArea, cfg);
+    if (road) {
+      roads.push(road);
+      spine = spineGeom;
     }
-    
-    // Add spine road buffer
-    currentY += metersToDegrees(cfg.spineRoadWidth / 2, centerLat);
+    currentY += spineWidthDeg / 2;
   }
   
-  // Generate remaining strips using double-loaded pattern
-  while (currentY < bbox.maxY) {
-    const band = bandPattern[bandIndex % bandPattern.length];
-    const bandDepth = metersToDegrees(band.depth, centerLat);
+  // Step 2: Generate double-loaded strips (Plot -> Plot -> Road pattern)
+  // Pattern: 2 rows of back-to-back plots, then 1 road
+  
+  while (currentY + plotDepthDeg < bbox.maxY) {
+    // Row A: plots facing one direction
+    const stripA = sliceStripIntoPlots(
+      developableArea,
+      bbox,
+      currentY,
+      currentY + plotDepthDeg,
+      cfg.targetWidth,
+      rowNumber,
+      cfg,
+      'internal',
+      alignmentAngle,
+      centerLat
+    );
+    plots.push(...stripA);
+    rowNumber++;
+    currentY += plotDepthDeg;
     
-    if (currentY + bandDepth > bbox.maxY) break;
+    // Row B: plots backing Row A (double-loaded)
+    if (currentY + plotDepthDeg < bbox.maxY) {
+      const stripB = sliceStripIntoPlots(
+        developableArea,
+        bbox,
+        currentY,
+        currentY + plotDepthDeg,
+        cfg.targetWidth,
+        rowNumber,
+        cfg,
+        'internal',
+        alignmentAngle,
+        centerLat
+      );
+      plots.push(...stripB);
+      rowNumber++;
+      currentY += plotDepthDeg;
+    }
     
-    if (band.type === 'plot') {
+    // Road (rib) after every 2 plot rows
+    if (currentY + roadWidthDeg < bbox.maxY) {
+      const roadCenterY = currentY + roadWidthDeg / 2;
+      
+      // Create rib road geometry
+      const ribStart = rotateCoordinates([[bbox.minX, roadCenterY]], alignmentAngle, bbox.center)[0];
+      const ribEnd = rotateCoordinates([[bbox.maxX, roadCenterY]], alignmentAngle, bbox.center)[0];
+      
+      const ribGeometry = turf.lineString([ribStart, ribEnd]);
+      
+      roads.push({
+        id: `rib-${ribNumber}`,
+        type: 'rib',
+        geometry: ribGeometry,
+        width: cfg.accessRoadWidth,
+        servesPlots: plots.filter(p => p.row === rowNumber - 1 || p.row === rowNumber - 2).map(p => p.id)
+      });
+      
+      // Add cul-de-sac at road end if it hits boundary
       try {
-        const strip = createStrip(
-          currentY,
-          currentY + bandDepth,
-          bbox.minX,
-          bbox.maxX,
-          bbox.center,
-          alignmentAngle
-        );
+        const parcelLine = turf.polygonToLine(developableArea);
+        const intersections = turf.lineIntersect(ribGeometry, parcelLine as Feature<LineString>);
         
-        const clipped = turf.intersect(turf.featureCollection([strip, parcel]));
-        
-        if (clipped && clipped.geometry.type === 'Polygon') {
-          const stripPlots = sliceStripIntoPlots(
-            clipped as Feature<Polygon>,
-            parcel,
-            cfg.targetWidth,
-            rowNumber,
-            cfg,
-            'internal'
-          );
-          
-          // Apply truncation to corner plots (first and last in row)
-          if (stripPlots.length > 0) {
-            stripPlots[0] = applyTruncation(stripPlots[0], cfg.truncationSize, true);
-            if (stripPlots.length > 1) {
-              stripPlots[stripPlots.length - 1] = applyTruncation(
-                stripPlots[stripPlots.length - 1],
-                cfg.truncationSize,
-                true
-              );
-            }
+        if (intersections.features.length > 0) {
+          for (const pt of intersections.features) {
+            const bearing = turf.bearing(turf.point(ribStart), turf.point(ribEnd));
+            const culDeSac = createCulDeSac(pt.geometry.coordinates, bearing, cfg.culDeSacRadius);
+            
+            roads.push({
+              id: `cul-de-sac-${ribNumber}`,
+              type: 'cul-de-sac',
+              geometry: culDeSac,
+              width: cfg.culDeSacRadius * 2,
+              servesPlots: []
+            });
           }
-          
-          plots.push(...stripPlots);
-          rowNumber++;
         }
       } catch (e) {
-        // Skip strip on error
+        // Skip cul-de-sac
       }
-    } else if (band.type === 'road') {
-      // Create rib road
-      try {
-        const roadMidY = currentY + bandDepth / 2;
-        const roadLine = createStrip(
-          roadMidY - bandDepth / 200,
-          roadMidY + bandDepth / 200,
-          bbox.minX,
-          bbox.maxX,
-          bbox.center,
-          alignmentAngle
-        );
-        
-        const roadCoords = roadLine.geometry.coordinates[0];
-        const ribRoad = turf.lineString([
-          roadCoords[0],
-          roadCoords[1]
-        ]);
-        
-        roads.push({
-          id: `rib-${ribNumber}`,
-          type: 'rib',
-          geometry: ribRoad,
-          width: cfg.accessRoadWidth,
-          servesPlots: plots.filter(p => p.row === rowNumber - 1 || p.row === rowNumber).map(p => p.id)
-        });
-        
-        ribNumber++;
-      } catch (e) {
-        // Skip road on error
-      }
+      
+      ribNumber++;
+      currentY += roadWidthDeg;
     }
-    
-    currentY += bandDepth;
-    bandIndex++;
   }
   
-  // Renumber plots sequentially
-  plots.forEach((plot, index) => {
-    plot.plotNumber = index + 1;
-    plot.id = `plot-${index + 1}`;
+  // Step 3: Handle remaining space as residual plots
+  if (currentY < bbox.maxY) {
+    const remainingDepth = bbox.maxY - currentY;
+    const remainingMeters = degreesToMeters(remainingDepth, centerLat);
+    
+    if (remainingMeters >= 5) { // At least 5m remaining
+      const residualStrip = sliceStripIntoPlots(
+        developableArea,
+        bbox,
+        currentY,
+        bbox.maxY,
+        cfg.targetWidth,
+        rowNumber,
+        cfg,
+        'internal',
+        alignmentAngle,
+        centerLat
+      );
+      
+      for (const plot of residualStrip) {
+        plots.push({
+          ...plot,
+          isResidual: true,
+          label: `Residual ${getResidualLabel(residuals.length)}`
+        });
+      }
+    }
+  }
+  
+  // Step 4: Merge undersized plots with neighbors
+  plots = mergeResidualPlots(plots, cfg.minResidualArea);
+  
+  // Step 5: Apply truncation to corner plots at intersections
+  plots = plots.map((plot, idx) => {
+    // Apply truncation to first and last plot of each row
+    const isCorner = plots.filter(p => p.row === plot.row)[0] === plot ||
+                     plots.filter(p => p.row === plot.row).slice(-1)[0] === plot;
+    
+    if (isCorner && plot.facingRoad === 'internal') {
+      return applyTruncation(plot, cfg.truncationSize);
+    }
+    return plot;
+  });
+  
+  // Step 6: Renumber and categorize plots
+  let plotNumber = 1;
+  let residualIndex = 0;
+  
+  plots.forEach(plot => {
+    if (plot.isResidual) {
+      plot.label = `Residual ${getResidualLabel(residualIndex)}`;
+      plot.plotNumber = 0;
+      residualIndex++;
+      residuals.push(plot);
+    } else {
+      plot.plotNumber = plotNumber;
+      plot.label = `Plot ${plotNumber}`;
+      plot.id = `plot-${plotNumber}`;
+      plotNumber++;
+    }
   });
   
   // Calculate statistics
+  const standardPlots = plots.filter(p => !p.isResidual);
   const totalPlotArea = plots.reduce((sum, p) => sum + p.area, 0);
   const totalRoadArea = roads.reduce((sum, r) => {
-    const length = turf.length(r.geometry, { units: 'meters' });
+    if (r.type === 'cul-de-sac') {
+      return sum + turf.area(r.geometry as Feature<Polygon>);
+    }
+    const length = turf.length(r.geometry as Feature<LineString>, { units: 'meters' });
     return sum + (length * r.width);
   }, 0);
-  
-  // Find spine for visualization
-  const spine = roads.find(r => r.type === 'spine')?.geometry || null;
   
   return {
     plots,
     roads,
     spine,
+    residuals,
     statistics: {
       totalPlots: plots.length,
+      standardPlots: standardPlots.length,
+      residualPlots: residuals.length,
+      mergedPlots: plots.filter(p => p.mergedFrom && p.mergedFrom.length > 0).length,
       totalArea: parcelArea,
       plotArea: totalPlotArea,
       roadArea: totalRoadArea,
-      efficiency: (totalPlotArea / parcelArea) * 100,
+      efficiency: (totalPlotArea / netArea) * 100,
       averagePlotSize: totalPlotArea / plots.length || 0,
       partialPlots: plots.filter(p => p.isPartial).length
     }
@@ -552,7 +736,7 @@ export function generateLayout(
  */
 export function createRoadVisualization(
   roads: RoadSegment[]
-): FeatureCollection<LineString> {
+): FeatureCollection<LineString | Polygon> {
   return turf.featureCollection(
     roads.map(road => ({
       ...road.geometry,
@@ -561,8 +745,9 @@ export function createRoadVisualization(
         id: road.id,
         type: road.type,
         width: road.width,
-        color: road.type === 'spine' ? '#3B82F6' : '#6B7280' // Blue for spine, gray for ribs
+        color: road.type === 'spine' ? '#3B82F6' : 
+               road.type === 'cul-de-sac' ? '#8B5CF6' : '#6B7280'
       }
     }))
-  );
+  ) as FeatureCollection<LineString | Polygon>;
 }

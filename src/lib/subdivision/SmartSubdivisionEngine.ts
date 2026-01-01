@@ -37,7 +37,7 @@ export interface SubdivisionOutput {
   visualization: {
     frontage: Feature<LineString> | null;
     spine: Feature<LineString> | null;
-    roads: FeatureCollection<LineString>;
+    roads: FeatureCollection<LineString | Polygon>;
     plots: FeatureCollection<Polygon>;
   };
   summary: {
