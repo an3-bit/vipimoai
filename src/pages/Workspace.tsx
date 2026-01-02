@@ -76,12 +76,57 @@ export default function Workspace() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   
-  // Form state
-  const [plotSize, setPlotSize] = useState('50x100');
-  const [customWidth, setCustomWidth] = useState('15.24');
-  const [customDepth, setCustomDepth] = useState('30.48');
+  // Form state with unit support
+  const [plotSize, setPlotSize] = useState('50x100ft');
+  const [inputUnit, setInputUnit] = useState<'FEET' | 'METERS'>('FEET');
+  const [customWidth, setCustomWidth] = useState('50');
+  const [customDepth, setCustomDepth] = useState('100');
   const [roadWidth, setRoadWidth] = useState('9');
   const [riparianBufferEnabled, setRiparianBufferEnabled] = useState(true);
+  
+  // Unit conversion constant
+  const FEET_TO_METERS = 0.3048;
+  
+  // Helper to get dimensions in meters based on preset or custom
+  const getDimensionsInMeters = useCallback(() => {
+    switch (plotSize) {
+      case '50x100ft':
+        return { width: 50 * FEET_TO_METERS, depth: 100 * FEET_TO_METERS }; // 15.24m x 30.48m
+      case '40x80ft':
+        return { width: 40 * FEET_TO_METERS, depth: 80 * FEET_TO_METERS }; // 12.19m x 24.38m
+      case '100x100ft':
+        return { width: 100 * FEET_TO_METERS, depth: 100 * FEET_TO_METERS }; // 30.48m x 30.48m
+      case 'custom':
+        const w = parseFloat(customWidth) || 50;
+        const d = parseFloat(customDepth) || 100;
+        return {
+          width: inputUnit === 'FEET' ? w * FEET_TO_METERS : w,
+          depth: inputUnit === 'FEET' ? d * FEET_TO_METERS : d,
+        };
+      default:
+        return { width: 15.24, depth: 30.48 };
+    }
+  }, [plotSize, customWidth, customDepth, inputUnit]);
+  
+  // Get display dimensions (what user sees)
+  const getDisplayDimensions = useCallback(() => {
+    switch (plotSize) {
+      case '50x100ft':
+        return { width: 50, depth: 100, unit: 'ft' };
+      case '40x80ft':
+        return { width: 40, depth: 80, unit: 'ft' };
+      case '100x100ft':
+        return { width: 100, depth: 100, unit: 'ft' };
+      case 'custom':
+        return { 
+          width: parseFloat(customWidth) || 50, 
+          depth: parseFloat(customDepth) || 100, 
+          unit: inputUnit === 'FEET' ? 'ft' : 'm' 
+        };
+      default:
+        return { width: 50, depth: 100, unit: 'ft' };
+    }
+  }, [plotSize, customWidth, customDepth, inputUnit]);
   
   // Chat state
   const [chatOpen, setChatOpen] = useState(false);
@@ -234,8 +279,8 @@ export default function Workspace() {
         await deletePlots.mutateAsync(projectId);
       }
 
-      const width = plotSize === 'custom' ? parseFloat(customWidth) : 15.24;
-      const depth = plotSize === 'custom' ? parseFloat(customDepth) : 30.48;
+      // Use the smart conversion helper (always outputs meters)
+      const { width, depth } = getDimensionsInMeters();
       const road = parseFloat(roadWidth);
       
       // Convert AccessEdge[] to AccessEdgeConfig[]
@@ -877,40 +922,108 @@ export default function Workspace() {
           
           {/* Form */}
           <div className="p-4 space-y-4">
-            {/* Plot Size */}
+            {/* Plot Size Preset */}
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">Plot Size Target</Label>
-              <Select value={plotSize} onValueChange={setPlotSize}>
+              <Select value={plotSize} onValueChange={(v) => {
+                setPlotSize(v);
+                // Reset to feet for presets
+                if (v !== 'custom') setInputUnit('FEET');
+              }}>
                 <SelectTrigger className="bg-secondary/50">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="50x100">50 x 100 ft (Standard)</SelectItem>
-                  <SelectItem value="40x80">40 x 80 ft (Compact)</SelectItem>
+                  <SelectItem value="50x100ft">50 × 100 ft (Standard)</SelectItem>
+                  <SelectItem value="40x80ft">40 × 80 ft (Compact)</SelectItem>
+                  <SelectItem value="100x100ft">100 × 100 ft (Quarter Acre)</SelectItem>
                   <SelectItem value="custom">Custom Dimensions</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            {/* Custom Dimensions */}
+            {/* Custom Dimensions with Unit Toggle */}
             {plotSize === 'custom' && (
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Width (m)</Label>
-                  <Input 
-                    value={customWidth} 
-                    onChange={(e) => setCustomWidth(e.target.value)}
-                    className="bg-secondary/50"
-                  />
+              <div className="space-y-3">
+                {/* Unit Toggle */}
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Unit:</Label>
+                  <div className="flex rounded-md border border-border/50 overflow-hidden">
+                    <button
+                      type="button"
+                      className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                        inputUnit === 'FEET' 
+                          ? 'bg-primary text-primary-foreground' 
+                          : 'bg-secondary/50 hover:bg-secondary'
+                      }`}
+                      onClick={() => setInputUnit('FEET')}
+                    >
+                      Feet
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                        inputUnit === 'METERS' 
+                          ? 'bg-primary text-primary-foreground' 
+                          : 'bg-secondary/50 hover:bg-secondary'
+                      }`}
+                      onClick={() => setInputUnit('METERS')}
+                    >
+                      Meters
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Depth (m)</Label>
-                  <Input 
-                    value={customDepth} 
-                    onChange={(e) => setCustomDepth(e.target.value)}
-                    className="bg-secondary/50"
-                  />
+                
+                {/* Width & Depth Inputs */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">
+                      Width ({inputUnit === 'FEET' ? 'ft' : 'm'})
+                    </Label>
+                    <Input 
+                      type="number"
+                      value={customWidth} 
+                      onChange={(e) => setCustomWidth(e.target.value)}
+                      className="bg-secondary/50"
+                      placeholder={inputUnit === 'FEET' ? '50' : '15.24'}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">
+                      Depth ({inputUnit === 'FEET' ? 'ft' : 'm'})
+                    </Label>
+                    <Input 
+                      type="number"
+                      value={customDepth} 
+                      onChange={(e) => setCustomDepth(e.target.value)}
+                      className="bg-secondary/50"
+                      placeholder={inputUnit === 'FEET' ? '100' : '30.48'}
+                    />
+                  </div>
                 </div>
+                
+                {/* Conversion Preview */}
+                <p className="text-xs text-muted-foreground">
+                  {inputUnit === 'FEET' ? (
+                    <>≈ {((parseFloat(customWidth) || 0) * FEET_TO_METERS).toFixed(2)}m × {((parseFloat(customDepth) || 0) * FEET_TO_METERS).toFixed(2)}m</>
+                  ) : (
+                    <>≈ {((parseFloat(customWidth) || 0) / FEET_TO_METERS).toFixed(1)}ft × {((parseFloat(customDepth) || 0) / FEET_TO_METERS).toFixed(1)}ft</>
+                  )}
+                </p>
+              </div>
+            )}
+            
+            {/* Plot Area Display for Presets */}
+            {plotSize !== 'custom' && (
+              <div className="p-2 bg-primary/10 border border-primary/20 rounded-lg">
+                <p className="text-xs text-muted-foreground">
+                  Plot Area: {(() => {
+                    const dims = getDimensionsInMeters();
+                    const areaSqm = dims.width * dims.depth;
+                    const areaHa = areaSqm / 10000;
+                    return `${areaSqm.toFixed(0)} m² (${areaHa.toFixed(3)} Ha)`;
+                  })()}
+                </p>
               </div>
             )}
 
