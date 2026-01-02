@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Settings, Wand2, RotateCw, ArrowRight, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -16,10 +16,16 @@ interface SubdivisionFormProps {
   onSubdivisionComplete: (plots: Plot[], beacons: Beacon[], suggestions: AISuggestion[]) => void;
 }
 
+const FEET_TO_METERS = 0.3048;
+
 export function SubdivisionForm({ parcelCoordinates, onSubdivisionComplete }: SubdivisionFormProps) {
+  // Preset and unit state
+  const [plotPreset, setPlotPreset] = useState('50x100ft');
+  const [inputUnit, setInputUnit] = useState<'FEET' | 'METERS'>('FEET');
+  
   const [formData, setFormData] = useState<SubdivisionFormData>({
-    plot_width: 50,
-    plot_depth: 100,
+    plot_width: 15.24, // Will be calculated from preset
+    plot_depth: 30.48,
     strategy: 'auto_fit',
     orientation_degrees: 0,
     road_setback_m: 5,
@@ -27,6 +33,25 @@ export function SubdivisionForm({ parcelCoordinates, onSubdivisionComplete }: Su
   });
 
   const aiSubdivision = useAISubdivision();
+
+  // Get dimensions in meters based on preset or custom input
+  const getDimensionsInMeters = useCallback(() => {
+    switch (plotPreset) {
+      case '50x100ft':
+        return { width: 50 * FEET_TO_METERS, depth: 100 * FEET_TO_METERS };
+      case '40x80ft':
+        return { width: 40 * FEET_TO_METERS, depth: 80 * FEET_TO_METERS };
+      case '100x100ft':
+        return { width: 100 * FEET_TO_METERS, depth: 100 * FEET_TO_METERS };
+      case 'custom':
+        return {
+          width: inputUnit === 'FEET' ? formData.plot_width * FEET_TO_METERS : formData.plot_width,
+          depth: inputUnit === 'FEET' ? formData.plot_depth * FEET_TO_METERS : formData.plot_depth,
+        };
+      default:
+        return { width: 15.24, depth: 30.48 };
+    }
+  }, [plotPreset, formData.plot_width, formData.plot_depth, inputUnit]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,9 +62,16 @@ export function SubdivisionForm({ parcelCoordinates, onSubdivisionComplete }: Su
     }
 
     try {
+      // Get dimensions in meters for the engine
+      const { width, depth } = getDimensionsInMeters();
+      
       const result = await aiSubdivision.mutateAsync({
         parcelCoordinates,
-        formData,
+        formData: {
+          ...formData,
+          plot_width: width,
+          plot_depth: depth,
+        },
       });
 
       if (result.success) {
@@ -98,37 +130,109 @@ export function SubdivisionForm({ parcelCoordinates, onSubdivisionComplete }: Su
               <ArrowRight className="h-4 w-4 text-survey-accent" />
               Plot Dimensions
             </h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="plot_width">Width (m)</Label>
-                <Input
-                  id="plot_width"
-                  type="number"
-                  min={5}
-                  max={500}
-                  step={1}
-                  value={formData.plot_width}
-                  onChange={(e) => updateField('plot_width', parseFloat(e.target.value) || 0)}
-                  className="font-mono"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="plot_depth">Depth (m)</Label>
-                <Input
-                  id="plot_depth"
-                  type="number"
-                  min={5}
-                  max={500}
-                  step={1}
-                  value={formData.plot_depth}
-                  onChange={(e) => updateField('plot_depth', parseFloat(e.target.value) || 0)}
-                  className="font-mono"
-                />
-              </div>
+            
+            {/* Preset Dropdown */}
+            <div className="space-y-2">
+              <Label>Size Preset</Label>
+              <Select value={plotPreset} onValueChange={(v) => {
+                setPlotPreset(v);
+                if (v !== 'custom') setInputUnit('FEET');
+              }}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="50x100ft">50 × 100 ft (Standard)</SelectItem>
+                  <SelectItem value="40x80ft">40 × 80 ft (Compact)</SelectItem>
+                  <SelectItem value="100x100ft">100 × 100 ft (Quarter Acre)</SelectItem>
+                  <SelectItem value="custom">Custom Dimensions</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Plot area: {(formData.plot_width * formData.plot_depth).toLocaleString()} m²
-            </p>
+            
+            {/* Custom dimensions with unit toggle */}
+            {plotPreset === 'custom' && (
+              <>
+                {/* Unit Toggle */}
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Unit:</Label>
+                  <div className="flex rounded-md border border-border/50 overflow-hidden">
+                    <button
+                      type="button"
+                      className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                        inputUnit === 'FEET' 
+                          ? 'bg-primary text-primary-foreground' 
+                          : 'bg-secondary/50 hover:bg-secondary'
+                      }`}
+                      onClick={() => setInputUnit('FEET')}
+                    >
+                      Feet
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                        inputUnit === 'METERS' 
+                          ? 'bg-primary text-primary-foreground' 
+                          : 'bg-secondary/50 hover:bg-secondary'
+                      }`}
+                      onClick={() => setInputUnit('METERS')}
+                    >
+                      Meters
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="plot_width">Width ({inputUnit === 'FEET' ? 'ft' : 'm'})</Label>
+                    <Input
+                      id="plot_width"
+                      type="number"
+                      min={5}
+                      max={500}
+                      step={1}
+                      value={formData.plot_width}
+                      onChange={(e) => updateField('plot_width', parseFloat(e.target.value) || 0)}
+                      className="font-mono"
+                      placeholder={inputUnit === 'FEET' ? '50' : '15.24'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="plot_depth">Depth ({inputUnit === 'FEET' ? 'ft' : 'm'})</Label>
+                    <Input
+                      id="plot_depth"
+                      type="number"
+                      min={5}
+                      max={500}
+                      step={1}
+                      value={formData.plot_depth}
+                      onChange={(e) => updateField('plot_depth', parseFloat(e.target.value) || 0)}
+                      className="font-mono"
+                      placeholder={inputUnit === 'FEET' ? '100' : '30.48'}
+                    />
+                  </div>
+                </div>
+                
+                {/* Conversion preview */}
+                <p className="text-xs text-muted-foreground">
+                  {inputUnit === 'FEET' ? (
+                    <>≈ {(formData.plot_width * FEET_TO_METERS).toFixed(2)}m × {(formData.plot_depth * FEET_TO_METERS).toFixed(2)}m</>
+                  ) : (
+                    <>≈ {(formData.plot_width / FEET_TO_METERS).toFixed(1)}ft × {(formData.plot_depth / FEET_TO_METERS).toFixed(1)}ft</>
+                  )}
+                </p>
+              </>
+            )}
+            
+            {/* Area display for presets */}
+            {plotPreset !== 'custom' && (
+              <p className="text-xs text-muted-foreground">
+                Plot area: {(() => {
+                  const { width, depth } = getDimensionsInMeters();
+                  return `${(width * depth).toFixed(0)} m² (${((width * depth) / 10000).toFixed(3)} Ha)`;
+                })()}
+              </p>
+            )}
           </div>
 
           {/* Strategy Selection */}
