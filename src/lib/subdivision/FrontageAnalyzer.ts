@@ -1,190 +1,180 @@
 /**
  * FrontageAnalyzer - "The Eyes"
- * Analyzes parcel boundaries to detect existing road frontage,
- * calculate alignment angles, and identify access points.
+ * Detects existing road frontage and classifies parcel access
  * 
- * NEW: Supports constraint features (roads, buildings) and
- * calculates net developable area using boolean difference.
+ * Logic Flow:
+ * 1. Break parcel into edges
+ * 2. Check each edge proximity to known roads (15m threshold)
+ * 3. Mark ACCESS_SIDE or NEIGHBOR_LAND
+ * 4. Calculate net developable area after constraint subtraction
  */
 
 import * as turf from '@turf/turf';
-import type { Feature, Polygon, LineString, Position, MultiPolygon } from 'geojson';
+import type { Feature, Polygon, LineString, MultiPolygon, Position } from 'geojson';
 
 export interface ExistingRoad {
-  id?: string;
+  geometry: Feature<LineString | Polygon>;
   name?: string;
-  geometry: Feature<LineString>;
-  width?: number;
+  type?: string; // 'highway', 'track', 'path', etc.
 }
 
 export interface ConstraintFeature {
-  id: string;
-  type: 'road' | 'building' | 'river' | 'easement' | 'reserved';
+  geometry: Feature<Polygon>;
+  type: 'road' | 'building' | 'river' | 'buffer' | 'other';
   name?: string;
-  geometry: Feature<Polygon | LineString>;
-  bufferWidth?: number; // Buffer distance in meters for line features
+  bufferWidth?: number;
 }
 
 export interface ParcelEdge {
-  id: string;
-  coordinates: [Position, Position];
+  index: number;
+  start: Position;
+  end: Position;
+  lineString: Feature<LineString>;
   length: number;
   bearing: number;
   midpoint: Position;
-  geometry: Feature<LineString>;
+  // Access classification
+  isAccessSide: boolean;
+  roadName?: string;
+  distanceToRoad?: number;
 }
 
+export type FrontageStatus = 'PRIMARY_ACCESS' | 'MULTI_ACCESS' | 'LANDLOCKED';
+export type AccessType = 'existing_road' | 'corner_access' | 'forced_corridor';
+
 export interface FrontageResult {
-  status: 'PRIMARY_ACCESS' | 'LANDLOCKED';
-  primaryEdge: ParcelEdge | null;
-  allEdges: ParcelEdge[];
+  status: FrontageStatus;
+  accessType: AccessType;
+  edges: ParcelEdge[];
   frontageEdges: ParcelEdge[];
+  neighborEdges: ParcelEdge[];
   
-  // Access classification
-  accessType: 'existing_road' | 'forced_corridor' | 'longest_edge' | 'corner' | 'through';
+  // Primary edge for layout generation
+  primaryEdge: ParcelEdge | null;
   
-  // Alignment data
-  alignmentAngle: number; // Degrees from North (aligned to longest constraint or frontage)
-  tangentAngle: number; // Tangent of longest constraint feature
+  // Alignment info
+  alignmentAngle: number; // Degrees from North
+  tangentAngle: number;   // Tangent of primary road
   
-  // Net developable area (after obstacle subtraction)
+  // Net developable area after subtracting constraints
   netDevelopableArea: Feature<Polygon | MultiPolygon> | null;
-  originalArea: number;
-  netArea: number;
-  lostArea: number; // Area lost to constraints
+  appliedConstraints: ConstraintFeature[];
+  lostArea: number; // sqm lost to constraints
   
-  // Constraint analysis
-  constraintsApplied: ConstraintFeature[];
+  // Saved area calculation
+  savedArea: number; // sqm saved by using existing road
   
-  savedArea: number; // Area saved by using existing frontage
+  // Co-Pilot hook data
+  isLandlocked: boolean;
+  landlockedWarning?: string;
+  suggestedAccessDirection?: 'north' | 'south' | 'east' | 'west';
+  
+  // Recommendations
   recommendations: string[];
 }
 
 /**
- * Breaks a polygon into individual edge segments
+ * Extracts individual edges from a parcel polygon
  */
 export function extractParcelEdges(parcel: Feature<Polygon>): ParcelEdge[] {
   const coords = parcel.geometry.coordinates[0];
   const edges: ParcelEdge[] = [];
-
+  
   for (let i = 0; i < coords.length - 1; i++) {
     const start = coords[i];
     const end = coords[i + 1];
+    const lineString = turf.lineString([start, end]);
+    const length = turf.length(lineString, { units: 'meters' });
+    const bearing = turf.bearing(turf.point(start), turf.point(end));
+    const midpoint = turf.midpoint(turf.point(start), turf.point(end)).geometry.coordinates;
     
-    const startPoint = turf.point(start);
-    const endPoint = turf.point(end);
-    
-    const length = turf.distance(startPoint, endPoint, { units: 'meters' });
-    const bearing = turf.bearing(startPoint, endPoint);
-    const midpoint = turf.midpoint(startPoint, endPoint).geometry.coordinates;
-    const geometry = turf.lineString([start, end]);
-
     edges.push({
-      id: `edge-${i}`,
-      coordinates: [start as Position, end as Position],
+      index: i,
+      start,
+      end,
+      lineString,
       length,
       bearing,
-      midpoint: midpoint as Position,
-      geometry
+      midpoint,
+      isAccessSide: false
     });
   }
-
+  
   return edges;
 }
 
 /**
- * Calculates the tangent angle of a constraint feature (road curve, building edge)
- * For curved roads, finds the weighted average tangent
+ * Calculates the tangent angle of a road feature (weighted average bearing)
  */
-function calculateTangentAngle(feature: Feature<LineString | Polygon>): number {
-  let line: Feature<LineString>;
+export function calculateTangentAngle(feature: Feature<LineString | Polygon>): number {
+  let coords: Position[];
   
-  if (feature.geometry.type === 'Polygon') {
-    // Use the longest edge of the polygon
-    const coords = feature.geometry.coordinates[0];
-    let longestEdge: [Position, Position] = [coords[0], coords[1]];
-    let maxLength = 0;
-    
-    for (let i = 0; i < coords.length - 1; i++) {
-      const segLength = turf.distance(
-        turf.point(coords[i]),
-        turf.point(coords[i + 1]),
-        { units: 'meters' }
-      );
-      if (segLength > maxLength) {
-        maxLength = segLength;
-        longestEdge = [coords[i], coords[i + 1]];
-      }
-    }
-    
-    line = turf.lineString(longestEdge);
+  if (feature.geometry.type === 'LineString') {
+    coords = feature.geometry.coordinates;
   } else {
-    line = feature as Feature<LineString>;
+    coords = feature.geometry.coordinates[0];
   }
   
-  const coords = line.geometry.coordinates;
   if (coords.length < 2) return 0;
   
-  // For curved lines, calculate weighted average bearing
-  const bearings: { bearing: number; weight: number }[] = [];
+  // Calculate weighted average bearing based on segment lengths
+  let totalWeight = 0;
+  let weightedBearing = 0;
   
   for (let i = 0; i < coords.length - 1; i++) {
-    const segLength = turf.distance(
-      turf.point(coords[i]),
-      turf.point(coords[i + 1]),
-      { units: 'meters' }
-    );
-    const bearing = turf.bearing(
-      turf.point(coords[i]),
-      turf.point(coords[i + 1])
-    );
-    bearings.push({ bearing, weight: segLength });
+    const segment = turf.lineString([coords[i], coords[i + 1]]);
+    const length = turf.length(segment, { units: 'meters' });
+    const bearing = turf.bearing(turf.point(coords[i]), turf.point(coords[i + 1]));
+    
+    weightedBearing += bearing * length;
+    totalWeight += length;
   }
   
-  // Weighted circular mean
-  const totalWeight = bearings.reduce((sum, b) => sum + b.weight, 0);
-  const sinSum = bearings.reduce((sum, b) => sum + b.weight * Math.sin(b.bearing * Math.PI / 180), 0);
-  const cosSum = bearings.reduce((sum, b) => sum + b.weight * Math.cos(b.bearing * Math.PI / 180), 0);
-  const avgBearing = Math.atan2(sinSum / totalWeight, cosSum / totalWeight) * 180 / Math.PI;
-  
-  return normalizeAngle(avgBearing);
+  return totalWeight > 0 ? weightedBearing / totalWeight : 0;
 }
 
 /**
- * Checks if an edge is within proximity of an existing road
+ * Checks if an edge is within proximity of any existing road
  */
-function isEdgeNearRoad(
-  edge: ParcelEdge, 
-  roads: ExistingRoad[], 
-  proximityThreshold: number = 10
+export function isEdgeNearRoad(
+  edge: ParcelEdge,
+  roads: ExistingRoad[],
+  proximityThreshold: number = 15 // 15m threshold
 ): { isNear: boolean; distance: number; roadName?: string } {
-  const edgeMidpoint = turf.point(edge.midpoint);
-  
   let minDistance = Infinity;
   let nearestRoadName: string | undefined;
-
+  
   for (const road of roads) {
-    const distanceToRoad = turf.pointToLineDistance(edgeMidpoint, road.geometry, { units: 'meters' });
+    // Check distance from edge midpoint to road
+    const midpointPt = turf.point(edge.midpoint);
     
-    if (distanceToRoad < minDistance) {
-      minDistance = distanceToRoad;
-      nearestRoadName = road.name;
+    let distance: number;
+    if (road.geometry.geometry.type === 'LineString') {
+      distance = turf.pointToLineDistance(midpointPt, road.geometry as Feature<LineString>, { units: 'meters' });
+    } else {
+      // For polygon roads, use nearest point on boundary
+      const roadLine = turf.polygonToLine(road.geometry as Feature<Polygon>);
+      if (roadLine.type === 'Feature' && roadLine.geometry.type === 'LineString') {
+        distance = turf.pointToLineDistance(midpointPt, roadLine as Feature<LineString>, { units: 'meters' });
+      } else if (roadLine.type === 'Feature' && roadLine.geometry.type === 'MultiLineString') {
+        // MultiLineString - check each line
+        distance = Math.min(
+          ...roadLine.geometry.coordinates.map(line => 
+            turf.pointToLineDistance(midpointPt, turf.lineString(line), { units: 'meters' })
+          )
+        );
+      } else {
+        // FeatureCollection - check first feature
+        distance = Infinity;
+      }
     }
-
-    // Also check endpoints
-    const edgeStart = turf.point(edge.coordinates[0]);
-    const edgeEnd = turf.point(edge.coordinates[1]);
     
-    const distStart = turf.pointToLineDistance(edgeStart, road.geometry, { units: 'meters' });
-    const distEnd = turf.pointToLineDistance(edgeEnd, road.geometry, { units: 'meters' });
-    
-    const avgDist = (distStart + distEnd + distanceToRoad) / 3;
-    if (avgDist < minDistance) {
-      minDistance = avgDist;
+    if (distance < minDistance) {
+      minDistance = distance;
       nearestRoadName = road.name;
     }
   }
-
+  
   return {
     isNear: minDistance <= proximityThreshold,
     distance: minDistance,
@@ -193,93 +183,96 @@ function isEdgeNearRoad(
 }
 
 /**
- * Subtracts constraint features from parcel to get Net Developable Area
- * NetDevelopableArea = ParcelPolygon - (RoadPolygons + BuildingPolygons)
+ * Determines the cardinal direction of an edge based on its bearing
  */
-function calculateNetDevelopableArea(
+function getEdgeDirection(bearing: number): 'north' | 'south' | 'east' | 'west' {
+  // Normalize bearing to 0-360
+  const normalized = ((bearing % 360) + 360) % 360;
+  
+  if (normalized >= 315 || normalized < 45) return 'north';
+  if (normalized >= 45 && normalized < 135) return 'east';
+  if (normalized >= 135 && normalized < 225) return 'south';
+  return 'west';
+}
+
+/**
+ * Suggests the best direction for forced access based on edge lengths
+ */
+function suggestAccessDirection(edges: ParcelEdge[]): 'north' | 'south' | 'east' | 'west' {
+  const directionLengths: Record<string, number> = { north: 0, south: 0, east: 0, west: 0 };
+  
+  for (const edge of edges) {
+    const dir = getEdgeDirection(edge.bearing);
+    directionLengths[dir] += edge.length;
+  }
+  
+  // Return direction with longest edge (best for access)
+  return Object.entries(directionLengths)
+    .sort((a, b) => b[1] - a[1])[0][0] as 'north' | 'south' | 'east' | 'west';
+}
+
+/**
+ * Calculates net developable area by subtracting constraints
+ * Uses Boolean Difference: NetArea = Parcel - (Roads + Buildings + Buffers)
+ */
+export function calculateNetDevelopableArea(
   parcel: Feature<Polygon>,
   constraints: ConstraintFeature[]
 ): { 
   netArea: Feature<Polygon | MultiPolygon> | null; 
-  appliedConstraints: ConstraintFeature[];
+  appliedConstraints: ConstraintFeature[]; 
   lostArea: number;
 } {
-  let result: Feature<Polygon | MultiPolygon> | null = parcel;
-  const appliedConstraints: ConstraintFeature[] = [];
+  if (constraints.length === 0) {
+    return { 
+      netArea: parcel, 
+      appliedConstraints: [], 
+      lostArea: 0 
+    };
+  }
+  
   const originalArea = turf.area(parcel);
+  let currentArea: Feature<Polygon | MultiPolygon> = parcel;
+  const appliedConstraints: ConstraintFeature[] = [];
   
   for (const constraint of constraints) {
-    if (!result) break;
-    
-    let obstaclePolygon: Feature<Polygon> | null = null;
-    
-    if (constraint.geometry.geometry.type === 'LineString') {
-      // Buffer the line to create a polygon
-      const bufferWidth = constraint.bufferWidth || 
-        (constraint.type === 'road' ? 6 : 3);
-      
-      try {
-        const buffered = turf.buffer(constraint.geometry, bufferWidth / 2, { units: 'meters' });
-        if (buffered) {
-          obstaclePolygon = buffered as Feature<Polygon>;
-        }
-      } catch (e) {
-        console.warn(`[FrontageAnalyzer] Failed to buffer constraint ${constraint.id}:`, e);
-        continue;
-      }
-    } else {
-      obstaclePolygon = constraint.geometry as Feature<Polygon>;
-    }
-    
-    if (!obstaclePolygon) continue;
-    
-    // Check if constraint intersects parcel
     try {
-      const intersection = turf.intersect(turf.featureCollection([result as Feature<Polygon>, obstaclePolygon]));
-      if (!intersection) continue; // Constraint doesn't affect parcel
+      // Buffer the constraint if needed
+      let constraintPolygon = constraint.geometry;
+      if (constraint.bufferWidth && constraint.bufferWidth > 0) {
+        const buffered = turf.buffer(constraint.geometry, constraint.bufferWidth, { units: 'meters' });
+        if (buffered) {
+          constraintPolygon = buffered as Feature<Polygon>;
+        }
+      }
       
-      // Perform boolean difference
+      // Subtract constraint from current area
       const difference = turf.difference(
-        turf.featureCollection([result as Feature<Polygon>, obstaclePolygon])
+        turf.featureCollection([currentArea, constraintPolygon])
       );
       
       if (difference) {
-        result = difference as Feature<Polygon | MultiPolygon>;
+        currentArea = difference as Feature<Polygon | MultiPolygon>;
         appliedConstraints.push(constraint);
       }
     } catch (e) {
-      console.warn(`[FrontageAnalyzer] Failed to subtract constraint ${constraint.id}:`, e);
+      console.warn('[FrontageAnalyzer] Failed to subtract constraint:', constraint.name, e);
     }
   }
   
-  const netAreaValue = result ? turf.area(result) : 0;
+  const remainingArea = turf.area(currentArea);
+  const lostArea = originalArea - remainingArea;
   
-  return { 
-    netArea: result, 
+  return {
+    netArea: currentArea,
     appliedConstraints,
-    lostArea: originalArea - netAreaValue
+    lostArea
   };
 }
 
 /**
- * Normalizes bearing angle to 0-360 range
- */
-function normalizeAngle(angle: number): number {
-  while (angle < 0) angle += 360;
-  while (angle >= 360) angle -= 360;
-  return angle;
-}
-
-/**
- * Calculates the area saved by using existing frontage instead of creating a buffer road
- */
-function calculateSavedArea(edge: ParcelEdge, roadWidth: number = 9): number {
-  return edge.length * roadWidth;
-}
-
-/**
  * Main frontage analysis function
- * Runs BEFORE subdivision to determine access strategy and net developable area
+ * The "Eyes" of the subdivision engine
  */
 export function analyzeFrontage(
   parcel: Feature<Polygon>,
@@ -290,159 +283,159 @@ export function analyzeFrontage(
     constraints?: ConstraintFeature[];
   } = {}
 ): FrontageResult {
-  const { 
-    proximityThreshold = 10, 
-    minFrontageLength = 15,
+  const {
+    proximityThreshold = 15, // 15m threshold per spec
+    minFrontageLength = 20,  // Minimum 20m frontage to be useful
     constraints = []
   } = options;
-
+  
+  console.log('[FrontageAnalyzer] Starting analysis...');
+  console.log('[FrontageAnalyzer] Roads to check:', existingRoads.length);
+  console.log('[FrontageAnalyzer] Proximity threshold:', proximityThreshold, 'm');
+  
+  // Step 1: Extract parcel edges
   const edges = extractParcelEdges(parcel);
-  const recommendations: string[] = [];
-  const originalArea = turf.area(parcel);
-
-  // Step 1: Calculate Net Developable Area (subtract obstacles)
+  console.log('[FrontageAnalyzer] Extracted', edges.length, 'edges');
+  
+  // Step 2: Calculate net developable area (subtract constraints)
   const { netArea, appliedConstraints, lostArea } = calculateNetDevelopableArea(parcel, constraints);
   
-  if (appliedConstraints.length > 0) {
-    recommendations.push(
-      `${appliedConstraints.length} constraint(s) applied`,
-      `Area lost to constraints: ${(lostArea / 10000).toFixed(3)} Ha`
-    );
-  }
-
-  // Step 2: Check each edge for road proximity
-  const edgesWithRoadInfo = edges.map(edge => ({
-    edge,
-    roadInfo: isEdgeNearRoad(edge, existingRoads, proximityThreshold)
-  }));
-
-  // Step 3: Find edges that are near existing roads
-  const frontageEdges = edgesWithRoadInfo
-    .filter(({ edge, roadInfo }) => 
-      roadInfo.isNear && edge.length >= minFrontageLength
-    )
-    .map(({ edge }) => edge)
-    .sort((a, b) => b.length - a.length);
-
-  // Step 4: Determine alignment angle from constraints or frontage
-  let alignmentAngle = 0;
-  let tangentAngle = 0;
+  // Step 3: Check each edge for road proximity
+  const frontageEdges: ParcelEdge[] = [];
+  const neighborEdges: ParcelEdge[] = [];
   
-  // Find longest road constraint for tangent alignment (e.g., Station Road curve)
-  const roadConstraints = constraints.filter(c => c.type === 'road');
-  let longestConstraint: ConstraintFeature | null = null;
-  let maxConstraintLength = 0;
-  
-  for (const constraint of roadConstraints) {
-    let length = 0;
-    if (constraint.geometry.geometry.type === 'LineString') {
-      length = turf.length(constraint.geometry as Feature<LineString>, { units: 'meters' });
-    } else {
-      try {
-        const line = turf.polygonToLine(constraint.geometry as Feature<Polygon>);
-        length = turf.length(line as Feature<LineString>, { units: 'meters' });
-      } catch (e) {
-        // Skip
-      }
+  for (const edge of edges) {
+    if (edge.length < minFrontageLength) {
+      // Too short to be useful frontage
+      neighborEdges.push(edge);
+      continue;
     }
     
-    if (length > maxConstraintLength) {
-      maxConstraintLength = length;
-      longestConstraint = constraint;
+    const { isNear, distance, roadName } = isEdgeNearRoad(edge, existingRoads, proximityThreshold);
+    
+    if (isNear) {
+      edge.isAccessSide = true;
+      edge.roadName = roadName;
+      edge.distanceToRoad = distance;
+      frontageEdges.push(edge);
+      console.log(`[FrontageAnalyzer] Edge ${edge.index} is ACCESS_SIDE (${roadName || 'Unknown Road'}, ${distance.toFixed(1)}m)`);
+    } else {
+      neighborEdges.push(edge);
     }
   }
   
-  if (longestConstraint) {
-    // Align grid to longest constraint (Station Road fix)
-    tangentAngle = calculateTangentAngle(longestConstraint.geometry as Feature<LineString | Polygon>);
-    alignmentAngle = tangentAngle;
-    recommendations.push(`Grid aligned to ${longestConstraint.name || 'constraint'} tangent (${tangentAngle.toFixed(1)}°)`);
-  } else if (frontageEdges.length > 0) {
-    // Align to primary frontage
-    alignmentAngle = normalizeAngle(frontageEdges[0].bearing);
-    tangentAngle = alignmentAngle;
-    recommendations.push(`Grid aligned to primary frontage (${alignmentAngle.toFixed(1)}°)`);
-  } else {
-    // Fallback: align to longest parcel edge
-    const longestEdge = edges.reduce((longest, edge) => 
-      edge.length > longest.length ? edge : longest
-    , edges[0]);
-    alignmentAngle = normalizeAngle(longestEdge.bearing);
-    tangentAngle = alignmentAngle;
-    recommendations.push(`Grid aligned to longest boundary (${alignmentAngle.toFixed(1)}°)`);
-  }
-
-  // Step 5: Determine access type
-  let accessType: 'existing_road' | 'forced_corridor' | 'longest_edge' | 'corner' | 'through' = 'forced_corridor';
+  // Step 4: Determine status and access type
+  let status: FrontageStatus;
+  let accessType: AccessType;
+  const recommendations: string[] = [];
   
   if (frontageEdges.length >= 2) {
-    // Check if edges are opposite (through) or adjacent (corner)
-    const angle1 = frontageEdges[0].bearing;
-    const angle2 = frontageEdges[1].bearing;
-    const angleDiff = Math.abs(normalizeAngle(angle1) - normalizeAngle(angle2));
-    
-    if (angleDiff > 150 && angleDiff < 210) {
-      accessType = 'through';
-      recommendations.push('Through-access detected: Consider split layout');
-    } else {
-      accessType = 'corner';
-      recommendations.push('Corner-access detected: L-shaped layout recommended');
-    }
+    status = 'MULTI_ACCESS';
+    accessType = 'corner_access';
+    recommendations.push('Multiple road frontages: Optimizing for corner access');
+    recommendations.push('Consider dual-frontage plot layout for premium lots');
   } else if (frontageEdges.length === 1) {
+    status = 'PRIMARY_ACCESS';
     accessType = 'existing_road';
-    recommendations.push('Single frontage: Spine road required for depth access');
+    recommendations.push('Single frontage detected: Using existing road');
+    recommendations.push('Spine road will extend perpendicular into parcel');
   } else {
+    status = 'LANDLOCKED';
     accessType = 'forced_corridor';
-    recommendations.push('LANDLOCKED: 12m access corridor required');
+    recommendations.push('LANDLOCKED: No existing road frontage detected');
+    recommendations.push('12m access corridor required for legal access');
   }
-
-  const primaryEdge = frontageEdges.length > 0 ? frontageEdges[0] : 
-    edges.reduce((longest, edge) => edge.length > longest.length ? edge : longest, edges[0]);
   
-  const savedArea = frontageEdges.length > 0 ? calculateSavedArea(frontageEdges[0]) : 0;
+  // Step 5: Calculate alignment angle
+  let alignmentAngle = 0;
+  let tangentAngle = 0;
+  let primaryEdge: ParcelEdge | null = null;
   
-  if (savedArea > 0) {
-    recommendations.push(`Saved ${(savedArea / 10000).toFixed(3)} Ha by using existing frontage`);
+  if (frontageEdges.length > 0) {
+    // Sort by length, use longest frontage edge
+    primaryEdge = frontageEdges.sort((a, b) => b.length - a.length)[0];
+    alignmentAngle = primaryEdge.bearing;
+    
+    // If we have the actual road geometry, calculate its tangent
+    const matchingRoad = existingRoads.find(r => r.name === primaryEdge?.roadName);
+    if (matchingRoad) {
+      tangentAngle = calculateTangentAngle(matchingRoad.geometry);
+    } else {
+      tangentAngle = alignmentAngle;
+    }
+  } else {
+    // Landlocked: align to longest edge
+    const longestEdge = edges.sort((a, b) => b.length - a.length)[0];
+    alignmentAngle = longestEdge.bearing;
+    tangentAngle = alignmentAngle;
+    primaryEdge = longestEdge;
   }
-
+  
+  // Step 6: Calculate saved area (road not needed if frontage exists)
+  // Assume 9m road width * frontage length
+  const savedArea = frontageEdges.reduce((sum, edge) => sum + (edge.length * 9), 0);
+  
+  // Step 7: Prepare landlocked warning and Co-Pilot suggestion
+  const isLandlocked = status === 'LANDLOCKED';
+  let landlockedWarning: string | undefined;
+  let suggestedAccessDirection: 'north' | 'south' | 'east' | 'west' | undefined;
+  
+  if (isLandlocked) {
+    suggestedAccessDirection = suggestAccessDirection(edges);
+    landlockedWarning = `Parcel has no road access. Suggest creating access on ${suggestedAccessDirection} boundary. Use command: "Set ${suggestedAccessDirection} boundary as existing road"`;
+    console.log('[FrontageAnalyzer] LANDLOCKED WARNING:', landlockedWarning);
+  }
+  
+  console.log('[FrontageAnalyzer] Analysis complete:', status);
+  
   return {
-    status: frontageEdges.length > 0 ? 'PRIMARY_ACCESS' : 'LANDLOCKED',
-    primaryEdge,
-    allEdges: edges,
-    frontageEdges,
+    status,
     accessType,
+    edges,
+    frontageEdges,
+    neighborEdges,
+    primaryEdge,
     alignmentAngle,
     tangentAngle,
     netDevelopableArea: netArea,
-    originalArea,
-    netArea: netArea ? turf.area(netArea) : originalArea,
+    appliedConstraints,
     lostArea,
-    constraintsApplied: appliedConstraints,
     savedArea,
+    isLandlocked,
+    landlockedWarning,
+    suggestedAccessDirection,
     recommendations
   };
 }
 
 /**
- * Creates a visual representation of the frontage edge for map display
+ * Creates a GeoJSON LineString feature for visualizing the primary frontage
  */
 export function createFrontageVisualization(
   frontageResult: FrontageResult
 ): Feature<LineString> | null {
-  if (!frontageResult.primaryEdge) return null;
-
-  const edge = frontageResult.primaryEdge;
+  if (frontageResult.frontageEdges.length === 0) {
+    return null;
+  }
   
-  return turf.lineString(
-    [edge.coordinates[0], edge.coordinates[1]],
-    {
+  // Use the primary (longest) frontage edge
+  const primaryEdge = frontageResult.frontageEdges.sort((a, b) => b.length - a.length)[0];
+  
+  // Calculate saved area in acres
+  const savedAreaAcres = (frontageResult.savedArea / 4047).toFixed(2);
+  
+  return {
+    type: 'Feature',
+    properties: {
       type: 'frontage',
-      accessType: frontageResult.accessType,
-      length: edge.length,
+      roadName: primaryEdge.roadName || 'Existing Road',
+      length: primaryEdge.length,
       savedArea: frontageResult.savedArea,
-      label: frontageResult.accessType === 'existing_road' 
-        ? `Existing Road Detected (Saved ${(frontageResult.savedArea / 10000).toFixed(2)} Ha)`
-        : `Access Corridor Required`
+      label: `Using: ${primaryEdge.roadName || 'Existing Road'} (Saved ${savedAreaAcres} Acres)`
+    },
+    geometry: {
+      type: 'LineString',
+      coordinates: [primaryEdge.start, primaryEdge.end]
     }
-  );
+  };
 }
