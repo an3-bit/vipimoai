@@ -78,6 +78,51 @@ const DEFAULT_CONFIG: PlotConfig = {
   culDeSacRadius: 15
 };
 
+// 1 acre = 4046.86 sqm
+const ONE_ACRE_SQM = 4046.86;
+
+/**
+ * Finds the longest straight edge of a polygon for optimal grid alignment
+ */
+function findLongestEdge(parcel: Feature<Polygon | MultiPolygon>): { bearing: number; length: number; midpoint: Position } {
+  let coords: Position[];
+  
+  if (parcel.geometry.type === 'MultiPolygon') {
+    // For MultiPolygon, find the largest polygon and use its edges
+    let maxArea = 0;
+    coords = parcel.geometry.coordinates[0][0];
+    for (const poly of parcel.geometry.coordinates) {
+      const polyFeature = turf.polygon(poly);
+      const area = turf.area(polyFeature);
+      if (area > maxArea) {
+        maxArea = area;
+        coords = poly[0];
+      }
+    }
+  } else {
+    coords = parcel.geometry.coordinates[0];
+  }
+  
+  let longestEdge = { bearing: 0, length: 0, midpoint: [0, 0] as Position };
+  
+  for (let i = 0; i < coords.length - 1; i++) {
+    const start = coords[i];
+    const end = coords[i + 1];
+    const lineString = turf.lineString([start, end]);
+    const length = turf.length(lineString, { units: 'meters' });
+    
+    if (length > longestEdge.length) {
+      longestEdge = {
+        bearing: turf.bearing(turf.point(start), turf.point(end)),
+        length,
+        midpoint: turf.midpoint(turf.point(start), turf.point(end)).geometry.coordinates
+      };
+    }
+  }
+  
+  return longestEdge;
+}
+
 /**
  * Converts meters to approximate degrees at given latitude
  */
@@ -367,9 +412,10 @@ function createSpineRoad(
 }
 
 /**
- * Slices a strip into individual plots using mesh slicing
+ * SUPER-GRID STRATEGY: Generate plots over expanded bounding box, then filter
+ * This ensures maximum coverage rather than grid floating inside polygon
  */
-function sliceStripIntoPlots(
+function generateSuperGrid(
   developableArea: Feature<Polygon | MultiPolygon>,
   bbox: { minX: number; maxX: number; minY: number; maxY: number; center: Position },
   startY: number,
@@ -384,24 +430,44 @@ function sliceStripIntoPlots(
   const plots: GeneratedPlot[] = [];
   const plotWidthDeg = metersToDegrees(plotWidth, centerLat);
   
-  let currentX = bbox.minX;
+  // SUPER-GRID: Pad bounding box by 20% to ensure full coverage
+  const paddingX = (bbox.maxX - bbox.minX) * 0.2;
+  const expandedMinX = bbox.minX - paddingX;
+  const expandedMaxX = bbox.maxX + paddingX;
+  
+  let currentX = expandedMinX;
   let column = 0;
   
-  while (currentX < bbox.maxX) {
+  while (currentX < expandedMaxX) {
     const nextX = currentX + plotWidthDeg;
     
     // Create plot rectangle
     const plotRect = createPlotRectangle(
       currentX,
-      Math.min(nextX, bbox.maxX),
+      Math.min(nextX, expandedMaxX),
       startY,
       endY,
       bbox.center,
       alignmentAngle
     );
     
-    // Clip against developable area
-    const clippedPlot = clipPlotToBoundary(plotRect, developableArea);
+    // Step 1: Check if fully contained (best case)
+    let clippedPlot: Feature<Polygon> | null = null;
+    let isFullyContained = false;
+    
+    try {
+      isFullyContained = turf.booleanContains(developableArea, plotRect);
+      if (isFullyContained) {
+        clippedPlot = plotRect;
+      }
+    } catch (e) {
+      // Fall through to intersection check
+    }
+    
+    // Step 2: If not fully contained, try intersection
+    if (!clippedPlot) {
+      clippedPlot = clipPlotToBoundary(plotRect, developableArea);
+    }
     
     if (clippedPlot) {
       const area = turf.area(clippedPlot);
@@ -413,10 +479,11 @@ function sliceStripIntoPlots(
       const actualWidth = degreesToMeters(plotBbox[2] - plotBbox[0], centerLat);
       const actualDepth = degreesToMeters(plotBbox[3] - plotBbox[1], centerLat);
       
-      // Determine if this is a residual or standard plot
+      // CRITICAL UPDATE: Keep if area >= 80% of target OR if it's a valid residual
       const isResidual = areaRatio < config.minAreaRatio;
+      const keepPlot = areaRatio >= config.minAreaRatio || (isResidual && area >= config.minResidualArea);
       
-      if (area >= config.minResidualArea) { // Keep if above minimum residual size
+      if (keepPlot) {
         plots.push({
           id: `plot-${row}-${column}`,
           plotNumber: 0, // Will be assigned later
@@ -434,7 +501,6 @@ function sliceStripIntoPlots(
           facingRoad
         });
       }
-      // If too small, it will be handled in merge step
     }
     
     currentX = nextX;
@@ -488,7 +554,7 @@ function mergeResidualPlots(
 }
 
 /**
- * Main layout generation function - Smart Mesh Algorithm
+ * Main layout generation function - Smart Mesh Algorithm with Force-Fill
  */
 export function generateLayout(
   parcel: Feature<Polygon>,
@@ -503,12 +569,37 @@ export function generateLayout(
   
   // Use net developable area if available (after constraint subtraction)
   const developableArea = frontage.netDevelopableArea || parcel;
-  const alignmentAngle = frontage.alignmentAngle;
+  const parcelArea = turf.area(parcel);
+  const netArea = turf.area(developableArea);
+  
+  // SMALL PARCEL PROTECTION: Disable automatic road buffers for parcels < 1 acre
+  const isSmallParcel = parcelArea < ONE_ACRE_SQM;
+  
+  // FORCE-FILL LOGIC: Determine alignment angle
+  let alignmentAngle: number;
+  let primaryEdge: { midpoint: Position; bearing: number } | null = null;
+  
+  if (frontage.primaryEdge) {
+    // Use frontage edge if available
+    alignmentAngle = frontage.alignmentAngle;
+    primaryEdge = {
+      midpoint: frontage.primaryEdge.midpoint,
+      bearing: frontage.primaryEdge.bearing
+    };
+    console.log('[LayoutGenerator] Using frontage alignment:', alignmentAngle);
+  } else {
+    // FALLBACK: Find longest edge of polygon for optimal alignment
+    const longestEdge = findLongestEdge(developableArea);
+    alignmentAngle = longestEdge.bearing;
+    primaryEdge = {
+      midpoint: longestEdge.midpoint,
+      bearing: longestEdge.bearing
+    };
+    console.log('[LayoutGenerator] No frontage - using longest edge alignment:', alignmentAngle);
+  }
   
   // Get aligned bounding box
   const bbox = getAlignedBoundingBox(developableArea, alignmentAngle);
-  const parcelArea = turf.area(parcel);
-  const netArea = turf.area(developableArea);
   
   const centroid = turf.centroid(developableArea);
   const centerLat = centroid.geometry.coordinates[1];
@@ -524,9 +615,9 @@ export function generateLayout(
   let ribNumber = 0;
   
   // Step 1: Handle access based on frontage analysis
-  if (frontage.status === 'PRIMARY_ACCESS') {
-    // Frontage row - plots face directly onto existing road (no buffer)
-    const stripPlots = sliceStripIntoPlots(
+  if (frontage.status === 'PRIMARY_ACCESS' || frontage.status === 'MULTI_ACCESS') {
+    // Frontage row - plots face directly onto existing road (no buffer/surrender)
+    const stripPlots = generateSuperGrid(
       developableArea,
       bbox,
       currentY,
@@ -542,8 +633,9 @@ export function generateLayout(
     plots.push(...stripPlots);
     rowNumber++;
     currentY += plotDepthDeg;
-  } else {
-    // Landlocked - create spine road
+  } else if (!isSmallParcel) {
+    // LANDLOCKED and NOT SMALL: create spine road
+    // (Small parcels skip spine road to maximize yield)
     const { road, spine: spineGeom } = createSpineRoad(frontage, developableArea, cfg);
     if (road) {
       roads.push(road);
@@ -551,13 +643,14 @@ export function generateLayout(
     }
     currentY += spineWidthDeg / 2;
   }
+  // For small landlocked parcels, we skip the spine road entirely
   
   // Step 2: Generate double-loaded strips (Plot -> Plot -> Road pattern)
   // Pattern: 2 rows of back-to-back plots, then 1 road
   
   while (currentY + plotDepthDeg < bbox.maxY) {
     // Row A: plots facing one direction
-    const stripA = sliceStripIntoPlots(
+    const stripA = generateSuperGrid(
       developableArea,
       bbox,
       currentY,
@@ -575,7 +668,7 @@ export function generateLayout(
     
     // Row B: plots backing Row A (double-loaded)
     if (currentY + plotDepthDeg < bbox.maxY) {
-      const stripB = sliceStripIntoPlots(
+      const stripB = generateSuperGrid(
         developableArea,
         bbox,
         currentY,
@@ -644,7 +737,7 @@ export function generateLayout(
     const remainingMeters = degreesToMeters(remainingDepth, centerLat);
     
     if (remainingMeters >= 5) { // At least 5m remaining
-      const residualStrip = sliceStripIntoPlots(
+      const residualStrip = generateSuperGrid(
         developableArea,
         bbox,
         currentY,
