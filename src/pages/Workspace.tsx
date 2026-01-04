@@ -390,20 +390,22 @@ export default function Workspace() {
     }
   };
 
-  // Handle access edge toggle
-  const handleAccessEdgeToggle = useCallback((edgeIndex: number, roadWidth?: number) => {
+  // Handle access edge toggle (Manual Anchor)
+  const handleAccessEdgeToggle = useCallback((edgeIndex: number, roadWidth?: number, bearing?: number, length?: number) => {
     setAccessEdges(prev => {
       const existing = prev.find(e => e.edgeIndex === edgeIndex);
       if (existing) {
         // Remove the edge
         return prev.filter(e => e.edgeIndex !== edgeIndex);
       } else if (roadWidth !== undefined) {
-        // Add new edge
+        // Add new edge with bearing for grid alignment (Manual Anchor)
         const directions = ['South', 'East', 'North', 'West'];
         return [...prev, {
           edgeIndex,
           roadWidth,
           label: `${directions[edgeIndex]} Access (${roadWidth}m)`,
+          bearing: bearing || 0,
+          length: length || 0,
         }];
       }
       return prev;

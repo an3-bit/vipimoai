@@ -5,30 +5,85 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Route, Check } from 'lucide-react';
+import { Route, Check, Anchor } from 'lucide-react';
 
 export interface AccessEdge {
   edgeIndex: number;
   roadWidth: number;
   label: string;
+  bearing: number; // NEW: Edge bearing for grid alignment
+  length: number;  // NEW: Edge length in meters
 }
 
 interface AccessRoadSelectorProps {
   parcelCoordinates: { lat: number; lng: number }[];
   accessEdges: AccessEdge[];
-  onAccessEdgeToggle: (edgeIndex: number, roadWidth?: number) => void;
+  onAccessEdgeToggle: (edgeIndex: number, roadWidth?: number, bearing?: number, length?: number) => void;
   enabled: boolean;
 }
 
-// Get the edge segments from parcel coordinates
-function getEdgeSegments(coords: { lat: number; lng: number }[]): { start: { lat: number; lng: number }; end: { lat: number; lng: number }; index: number }[] {
+/**
+ * Calculate the bearing (angle) between two coordinates
+ * Returns angle in degrees from North (0-360)
+ */
+function calculateBearing(start: { lat: number; lng: number }, end: { lat: number; lng: number }): number {
+  const dLng = (end.lng - start.lng) * Math.PI / 180;
+  const lat1 = start.lat * Math.PI / 180;
+  const lat2 = end.lat * Math.PI / 180;
+  
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  
+  let bearing = Math.atan2(y, x) * 180 / Math.PI;
+  return (bearing + 360) % 360;
+}
+
+/**
+ * Calculate the length of an edge in meters using Haversine formula
+ */
+function calculateEdgeLength(start: { lat: number; lng: number }, end: { lat: number; lng: number }): number {
+  const R = 6371000; // Earth radius in meters
+  const dLat = (end.lat - start.lat) * Math.PI / 180;
+  const dLng = (end.lng - start.lng) * Math.PI / 180;
+  const lat1 = start.lat * Math.PI / 180;
+  const lat2 = end.lat * Math.PI / 180;
+  
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1) * Math.cos(lat2) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  
+  return R * c;
+}
+
+// Get the edge segments from parcel coordinates with bearing and length
+function getEdgeSegments(coords: { lat: number; lng: number }[]): { 
+  start: { lat: number; lng: number }; 
+  end: { lat: number; lng: number }; 
+  index: number;
+  bearing: number;
+  length: number;
+}[] {
   if (coords.length < 3) return [];
   
-  const edges: { start: { lat: number; lng: number }; end: { lat: number; lng: number }; index: number }[] = [];
+  const edges: { 
+    start: { lat: number; lng: number }; 
+    end: { lat: number; lng: number }; 
+    index: number;
+    bearing: number;
+    length: number;
+  }[] = [];
+  
   for (let i = 0; i < coords.length; i++) {
     const start = coords[i];
     const end = coords[(i + 1) % coords.length];
-    edges.push({ start, end, index: i });
+    edges.push({ 
+      start, 
+      end, 
+      index: i,
+      bearing: calculateBearing(start, end),
+      length: calculateEdgeLength(start, end)
+    });
   }
   return edges;
 }
@@ -53,6 +108,8 @@ export function AccessRoadSelector({
   enabled 
 }: AccessRoadSelectorProps) {
   const [selectedEdgeIndex, setSelectedEdgeIndex] = useState<number | null>(null);
+  const [selectedEdgeBearing, setSelectedEdgeBearing] = useState<number>(0);
+  const [selectedEdgeLength, setSelectedEdgeLength] = useState<number>(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [roadWidthInput, setRoadWidthInput] = useState('9');
   const [roadType, setRoadType] = useState<'custom' | '9' | '12' | 'highway'>('9');
@@ -71,9 +128,11 @@ export function AccessRoadSelector({
     } else {
       // Open dialog to configure road width
       setSelectedEdgeIndex(edgeIndex);
+      setSelectedEdgeBearing(edges.find(e => e.index === edgeIndex)?.bearing || 0);
+      setSelectedEdgeLength(edges.find(e => e.index === edgeIndex)?.length || 0);
       setDialogOpen(true);
     }
-  }, [enabled, accessEdges, onAccessEdgeToggle]);
+  }, [enabled, accessEdges, onAccessEdgeToggle, edges]);
   
   const handleConfirmRoad = useCallback(() => {
     if (selectedEdgeIndex === null) return;
@@ -96,10 +155,11 @@ export function AccessRoadSelector({
         width = 9;
     }
     
-    onAccessEdgeToggle(selectedEdgeIndex, width);
+    // Pass bearing and length for grid alignment (Manual Anchor)
+    onAccessEdgeToggle(selectedEdgeIndex, width, selectedEdgeBearing, selectedEdgeLength);
     setDialogOpen(false);
     setSelectedEdgeIndex(null);
-  }, [selectedEdgeIndex, roadType, roadWidthInput, onAccessEdgeToggle]);
+  }, [selectedEdgeIndex, roadType, roadWidthInput, onAccessEdgeToggle, selectedEdgeBearing, selectedEdgeLength]);
   
   if (parcelCoordinates.length < 3) return null;
   
@@ -142,15 +202,21 @@ export function AccessRoadSelector({
               <Popup>
                 <div className="text-center p-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <Route className="h-4 w-4 text-emerald-500" />
-                    <span className="font-semibold text-emerald-600">Access Road ({direction} Edge)</span>
+                    <Anchor className="h-4 w-4 text-emerald-500" />
+                    <span className="font-semibold text-emerald-600">Access Anchor ({direction} Edge)</span>
                   </div>
                   <p className="text-sm">Width: {accessEdge.roadWidth}m</p>
+                  <p className="text-xs text-muted-foreground">
+                    Bearing: {Math.round(accessEdge.bearing)}° | Length: {Math.round(accessEdge.length)}m
+                  </p>
+                  <p className="text-xs text-emerald-600 mt-1">
+                    Grid aligned to this edge (0m buffer)
+                  </p>
                   <button 
                     onClick={() => onAccessEdgeToggle(edge.index)}
                     className="text-xs text-destructive hover:underline mt-1"
                   >
-                    Remove Access Road
+                    Remove Anchor
                   </button>
                 </div>
               </Popup>
@@ -164,11 +230,11 @@ export function AccessRoadSelector({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Route className="h-5 w-5 text-primary" />
-              Configure Access Road
+              <Anchor className="h-5 w-5 text-primary" />
+              Set Access Anchor
             </DialogTitle>
             <DialogDescription>
-              Set the width of the existing access road on this boundary. Plots will be placed directly against this edge without internal road surrender.
+              This edge will become the anchor for grid alignment. Plots will align parallel to this edge with 0m buffer (existing road).
             </DialogDescription>
           </DialogHeader>
           
@@ -203,9 +269,13 @@ export function AccessRoadSelector({
             )}
             
             <div className="p-3 bg-muted rounded-lg text-sm">
-              <p className="font-medium text-primary mb-1">💡 Frontage Optimization</p>
-              <p className="text-muted-foreground">
-                Plots on this edge will face the existing road directly, maximizing land yield by eliminating internal road surrender.
+              <p className="font-medium text-primary mb-1">⚓ Manual Anchor Mode</p>
+              <p className="text-muted-foreground mb-2">
+                Grid rotation will align to this edge bearing ({Math.round(selectedEdgeBearing)}°). 
+                No internal buffer will be applied on this side.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Edge length: {Math.round(selectedEdgeLength)}m
               </p>
             </div>
           </div>
@@ -215,8 +285,8 @@ export function AccessRoadSelector({
               Cancel
             </Button>
             <Button onClick={handleConfirmRoad} className="gap-2">
-              <Check className="h-4 w-4" />
-              Set Access Road
+              <Anchor className="h-4 w-4" />
+              Set Anchor
             </Button>
           </DialogFooter>
         </DialogContent>
