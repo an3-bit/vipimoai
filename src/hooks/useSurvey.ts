@@ -11,7 +11,15 @@ export function useProjects() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('projects')
-        .select('*')
+        .select(`
+          *,
+          parcels (
+            id,
+            coordinates,
+            centroid,
+            area_sqm
+          )
+        `)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -166,7 +174,8 @@ export function useCreateParcel() {
       return data as unknown as Parcel;
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['project'] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['project', variables.projectId] });
       toast.success('Parcel created successfully');
     },
     onError: (error) => {

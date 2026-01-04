@@ -16,6 +16,7 @@ export type ActionType =
   | 'project_updated'
   | 'status_changed'
   | 'subdivision_generated'
+  | 'frontage_edge_selected'
   | 'plot_status_changed'
   | 'export_completed'
   | 'river_drawn'
