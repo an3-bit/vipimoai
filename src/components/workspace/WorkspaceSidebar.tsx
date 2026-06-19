@@ -34,6 +34,8 @@ interface WorkspaceSidebarProps {
 }
 
 const FEET_TO_METERS = 0.3048;
+const ACRE_TO_SQM = 4046.8564224;
+const HA_TO_SQM = 10000;
 
 export function WorkspaceSidebar({
   projectName,
