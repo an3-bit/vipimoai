@@ -76,6 +76,12 @@ export function WorkspaceSidebar({
       case 'custom':
         const w = parseFloat(customWidth) || 50;
         const d = parseFloat(customDepth) || 100;
+        if (inputUnit === 'ACRES' || inputUnit === 'HECTARES') {
+          // Area mode: customWidth holds the area value; produce a square plot
+          const areaSqm = inputUnit === 'ACRES' ? w * ACRE_TO_SQM : w * HA_TO_SQM;
+          const side = Math.sqrt(Math.max(areaSqm, 1));
+          return { width: side, depth: side };
+        }
         return {
           width: inputUnit === 'FEET' ? w * FEET_TO_METERS : w,
           depth: inputUnit === 'FEET' ? d * FEET_TO_METERS : d,
@@ -84,6 +90,8 @@ export function WorkspaceSidebar({
         return { width: 15.24, depth: 30.48 };
     }
   };
+
+  const isAreaMode = inputUnit === 'ACRES' || inputUnit === 'HECTARES';
 
   return (
     <>
