@@ -150,76 +150,97 @@ export function WorkspaceSidebar({
           {plotSize === 'custom' && (
             <div className="space-y-3">
               {/* Unit Toggle */}
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground">Unit:</Label>
-                <div className="flex rounded-md border border-border/50 overflow-hidden">
-                  <button
-                    type="button"
-                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                      inputUnit === 'FEET'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-secondary/50 hover:bg-secondary'
-                    }`}
-                    onClick={() => onInputUnitChange('FEET')}
-                  >
-                    Feet
-                  </button>
-                  <button
-                    type="button"
-                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                      inputUnit === 'METERS'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-secondary/50 hover:bg-secondary'
-                    }`}
-                    onClick={() => onInputUnitChange('METERS')}
-                  >
-                    Meters
-                  </button>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Input Mode:</Label>
+                <div className="grid grid-cols-4 rounded-md border border-border/50 overflow-hidden">
+                  {(['FEET', 'METERS', 'ACRES', 'HECTARES'] as const).map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      className={`px-2 py-1.5 text-xs font-medium transition-colors ${
+                        inputUnit === u
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-secondary/50 hover:bg-secondary'
+                      }`}
+                      onClick={() => onInputUnitChange(u)}
+                    >
+                      {u === 'FEET' ? 'ft' : u === 'METERS' ? 'm' : u === 'ACRES' ? 'Acres' : 'Ha'}
+                    </button>
+                  ))}
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {isAreaMode
+                    ? 'Area mode: enter target plot area (square plots generated).'
+                    : 'Dimension mode: enter width × depth.'}
+                </p>
               </div>
 
-              {/* Width & Depth Inputs */}
-              <div className="grid grid-cols-2 gap-2">
+              {/* Inputs */}
+              {isAreaMode ? (
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">
-                    Width ({inputUnit === 'FEET' ? 'ft' : 'm'})
+                    Plot Area ({inputUnit === 'ACRES' ? 'acres' : 'ha'})
                   </Label>
                   <Input
                     type="number"
+                    step="0.01"
                     value={customWidth}
                     onChange={(e) => onCustomWidthChange(e.target.value)}
                     className="bg-secondary/50"
-                    placeholder={inputUnit === 'FEET' ? '50' : '15.24'}
+                    placeholder={inputUnit === 'ACRES' ? '0.125' : '0.05'}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    {(() => {
+                      const v = parseFloat(customWidth) || 0;
+                      const sqm = inputUnit === 'ACRES' ? v * ACRE_TO_SQM : v * HA_TO_SQM;
+                      const side = Math.sqrt(Math.max(sqm, 0));
+                      return `≈ ${sqm.toFixed(0)} m² · square ${side.toFixed(1)}m × ${side.toFixed(1)}m`;
+                    })()}
+                  </p>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">
-                    Depth ({inputUnit === 'FEET' ? 'ft' : 'm'})
-                  </Label>
-                  <Input
-                    type="number"
-                    value={customDepth}
-                    onChange={(e) => onCustomDepthChange(e.target.value)}
-                    className="bg-secondary/50"
-                    placeholder={inputUnit === 'FEET' ? '100' : '30.48'}
-                  />
-                </div>
-              </div>
-
-              {/* Conversion Preview */}
-              <p className="text-xs text-muted-foreground">
-                {inputUnit === 'FEET' ? (
-                  <>
-                    ≈ {((parseFloat(customWidth) || 0) * FEET_TO_METERS).toFixed(2)}m ×{' '}
-                    {((parseFloat(customDepth) || 0) * FEET_TO_METERS).toFixed(2)}m
-                  </>
-                ) : (
-                  <>
-                    ≈ {((parseFloat(customWidth) || 0) / FEET_TO_METERS).toFixed(1)}ft ×{' '}
-                    {((parseFloat(customDepth) || 0) / FEET_TO_METERS).toFixed(1)}ft
-                  </>
-                )}
-              </p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">
+                        Width ({inputUnit === 'FEET' ? 'ft' : 'm'})
+                      </Label>
+                      <Input
+                        type="number"
+                        value={customWidth}
+                        onChange={(e) => onCustomWidthChange(e.target.value)}
+                        className="bg-secondary/50"
+                        placeholder={inputUnit === 'FEET' ? '50' : '15.24'}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">
+                        Depth ({inputUnit === 'FEET' ? 'ft' : 'm'})
+                      </Label>
+                      <Input
+                        type="number"
+                        value={customDepth}
+                        onChange={(e) => onCustomDepthChange(e.target.value)}
+                        className="bg-secondary/50"
+                        placeholder={inputUnit === 'FEET' ? '100' : '30.48'}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {inputUnit === 'FEET' ? (
+                      <>
+                        ≈ {((parseFloat(customWidth) || 0) * FEET_TO_METERS).toFixed(2)}m ×{' '}
+                        {((parseFloat(customDepth) || 0) * FEET_TO_METERS).toFixed(2)}m
+                      </>
+                    ) : (
+                      <>
+                        ≈ {((parseFloat(customWidth) || 0) / FEET_TO_METERS).toFixed(1)}ft ×{' '}
+                        {((parseFloat(customDepth) || 0) / FEET_TO_METERS).toFixed(1)}ft
+                      </>
+                    )}
+                  </p>
+                </>
+              )}
             </div>
           )}
 
