@@ -134,7 +134,7 @@ export function FrontageEdgeSelector({
           positions={selectedIndices.map((idx) => [
             parcelCoordinates[idx].lat,
             parcelCoordinates[idx].lng,
-          ])}
+          ] as [number, number])}
           color="#3b82f6"
           weight={4}
           opacity={0.7}
