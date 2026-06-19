@@ -235,8 +235,8 @@ export default function Workspace() {
             candidates.sort(
               (a: any, b: any) => Math.abs(a.area - areaSqm) - Math.abs(b.area - areaSqm)
             );
-            const chosen = candidates[0];
-            chosen.plotNumber = `Q${i + 1}`;
+            const chosen: any = candidates[0];
+            chosen.plotNumber = i + 1;
             chosen.id = `queue-${i + 1}-${Date.now()}`;
             collectedPlots.push(chosen);
             totalPlotArea += chosen.area || 0;
@@ -244,7 +244,9 @@ export default function Workspace() {
 
             // Subtract chosen plot from remaining polygon
             try {
-              const diff = turf.difference(remaining, chosen.geometry);
+              const diff: any = (turf.difference as any)(
+                turf.featureCollection([remaining, chosen.geometry])
+              );
               if (diff && diff.geometry.type === 'Polygon') {
                 remaining = diff;
               } else if (diff && diff.geometry.type === 'MultiPolygon') {
