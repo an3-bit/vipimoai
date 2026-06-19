@@ -142,18 +142,27 @@ export default function Workspace() {
       let targetWidth = 15;
       let targetDepth = 30;
 
-      // Parse custom dimensions if provided
-      if (state.customWidth && !isNaN(Number(state.customWidth))) {
-        targetWidth = Number(state.customWidth);
-      }
-      if (state.customDepth && !isNaN(Number(state.customDepth))) {
-        targetDepth = Number(state.customDepth);
-      }
+      if (state.inputUnit === 'ACRES' || state.inputUnit === 'HECTARES') {
+        // Area mode: customWidth holds the area value, generate square plots
+        const areaVal = Number(state.customWidth) || 0.125;
+        const areaSqm = state.inputUnit === 'ACRES' ? areaVal * 4046.8564224 : areaVal * 10000;
+        const side = Math.sqrt(Math.max(areaSqm, 1));
+        targetWidth = side;
+        targetDepth = side;
+      } else {
+        // Parse custom dimensions if provided
+        if (state.customWidth && !isNaN(Number(state.customWidth))) {
+          targetWidth = Number(state.customWidth);
+        }
+        if (state.customDepth && !isNaN(Number(state.customDepth))) {
+          targetDepth = Number(state.customDepth);
+        }
 
-      // Convert feet to meters if needed
-      if (state.inputUnit === 'FEET') {
-        targetWidth = targetWidth * 0.3048;
-        targetDepth = targetDepth * 0.3048;
+        // Convert feet to meters if needed
+        if (state.inputUnit === 'FEET') {
+          targetWidth = targetWidth * 0.3048;
+          targetDepth = targetDepth * 0.3048;
+        }
       }
 
       const roadWidth = parseFloat(state.roadWidth) || 9;
