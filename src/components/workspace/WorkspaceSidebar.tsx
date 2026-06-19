@@ -31,6 +31,8 @@ interface WorkspaceSidebarProps {
   invalidPlotCount: number;
   roadAreaSqm: number;
   efficiency: number;
+  areaQueue?: { value: number; unit: 'ACRES' | 'HECTARES' }[];
+  onAreaQueueChange?: (queue: { value: number; unit: 'ACRES' | 'HECTARES' }[]) => void;
 }
 
 const FEET_TO_METERS = 0.3048;
