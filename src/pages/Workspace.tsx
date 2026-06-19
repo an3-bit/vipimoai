@@ -187,19 +187,107 @@ export default function Workspace() {
       const parcelFeature = turf.polygon([parcelCoords]);
 
       // Phase 2 & 3: Run the subdivision engine
-      const result = subdivideParcel({
-        parcel: parcelFeature,
-        config: {
-          targetWidth,
-          targetDepth,
-          accessRoadWidth: roadWidth,
-          spineRoadWidth: 12,
-          minAreaRatio: 0.75,
-          minResidualArea: 200,
-          truncationSize: 3,
-          culDeSacRadius: 15,
-        },
-      });
+      // Queued (mixed-size) mode: iterate over user-defined area entries
+      const useQueue =
+        (state.inputUnit === 'ACRES' || state.inputUnit === 'HECTARES') &&
+        state.areaQueue.length > 0;
+
+      let result: any;
+
+      if (useQueue) {
+        const ACRE_SQM = 4046.8564224;
+        const HA_SQM = 10000;
+        let remaining: any = parcelFeature;
+        const collectedPlots: any[] = [];
+        let totalRoadArea = 0;
+        let totalPlotArea = 0;
+
+        for (let i = 0; i < state.areaQueue.length; i++) {
+          const entry = state.areaQueue[i];
+          const areaSqm = entry.unit === 'ACRES' ? entry.value * ACRE_SQM : entry.value * HA_SQM;
+          const side = Math.sqrt(Math.max(areaSqm, 1));
+
+          if (!remaining) break;
+
+          try {
+            const r = subdivideParcel({
+              parcel: remaining,
+              config: {
+                targetWidth: side,
+                targetDepth: side,
+                accessRoadWidth: roadWidth,
+                spineRoadWidth: 12,
+                minAreaRatio: 0.75,
+                minResidualArea: 200,
+                truncationSize: 3,
+                culDeSacRadius: 15,
+              },
+            });
+
+            // Pick the plot whose area best matches the request
+            const candidates = (r.plots || []).filter(
+              (p: any) => p.geometry && (p.area || 0) > 0
+            );
+            if (candidates.length === 0) {
+              toast.warning(`Queue #${i + 1}: no fit for ${entry.value} ${entry.unit}`);
+              continue;
+            }
+            candidates.sort(
+              (a: any, b: any) => Math.abs(a.area - areaSqm) - Math.abs(b.area - areaSqm)
+            );
+            const chosen: any = candidates[0];
+            chosen.plotNumber = i + 1;
+            chosen.id = `queue-${i + 1}-${Date.now()}`;
+            collectedPlots.push(chosen);
+            totalPlotArea += chosen.area || 0;
+            totalRoadArea += r.summary?.roadArea || 0;
+
+            // Subtract chosen plot from remaining polygon
+            try {
+              const diff: any = (turf.difference as any)(
+                turf.featureCollection([remaining, chosen.geometry])
+              );
+              if (diff && diff.geometry.type === 'Polygon') {
+                remaining = diff;
+              } else if (diff && diff.geometry.type === 'MultiPolygon') {
+                // Pick the largest sub-polygon for subsequent placement
+                const polys = diff.geometry.coordinates.map((c: any) => turf.polygon(c));
+                polys.sort((a: any, b: any) => turf.area(b) - turf.area(a));
+                remaining = polys[0];
+              }
+            } catch (e) {
+              console.warn('Difference failed; continuing with prior remaining', e);
+            }
+          } catch (e) {
+            console.error(`Queue entry ${i + 1} failed:`, e);
+          }
+        }
+
+        const parcelAreaSqm = turf.area(parcelFeature);
+        result = {
+          plots: collectedPlots,
+          summary: {
+            roadArea: totalRoadArea,
+            roadAreaHa: totalRoadArea / 10000,
+            parcelAreaHa: parcelAreaSqm / 10000,
+            efficiency: parcelAreaSqm > 0 ? (totalPlotArea / parcelAreaSqm) * 100 : 0,
+          },
+        };
+      } else {
+        result = subdivideParcel({
+          parcel: parcelFeature,
+          config: {
+            targetWidth,
+            targetDepth,
+            accessRoadWidth: roadWidth,
+            spineRoadWidth: 12,
+            minAreaRatio: 0.75,
+            minResidualArea: 200,
+            truncationSize: 3,
+            culDeSacRadius: 15,
+          },
+        });
+      }
 
       // Log if using manually selected frontage
       if (state.selectedFrontageEdge) {
@@ -489,6 +577,8 @@ export default function Workspace() {
           invalidPlotCount={state.invalidPlotCount}
           roadAreaSqm={state.roadAreaSqm}
           efficiency={state.efficiency}
+          areaQueue={state.areaQueue}
+          onAreaQueueChange={state.setAreaQueue}
         />
       </div>
 
