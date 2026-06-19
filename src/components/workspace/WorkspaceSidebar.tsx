@@ -64,6 +64,8 @@ export function WorkspaceSidebar({
   invalidPlotCount,
   roadAreaSqm,
   efficiency,
+  areaQueue = [],
+  onAreaQueueChange,
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
 
