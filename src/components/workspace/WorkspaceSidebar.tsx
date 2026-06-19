@@ -13,8 +13,8 @@ interface WorkspaceSidebarProps {
   locationName?: string;
   plotSize: string;
   onPlotSizeChange: (value: string) => void;
-  inputUnit: 'FEET' | 'METERS';
-  onInputUnitChange: (unit: 'FEET' | 'METERS') => void;
+  inputUnit: 'FEET' | 'METERS' | 'ACRES' | 'HECTARES';
+  onInputUnitChange: (unit: 'FEET' | 'METERS' | 'ACRES' | 'HECTARES') => void;
   customWidth: string;
   onCustomWidthChange: (value: string) => void;
   customDepth: string;
