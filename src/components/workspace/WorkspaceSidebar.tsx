@@ -181,18 +181,33 @@ export function WorkspaceSidebar({
 
               {/* Inputs */}
               {isAreaMode ? (
-                <div className="space-y-1">
+                <div className="space-y-2">
                   <Label className="text-xs text-muted-foreground">
                     Plot Area ({inputUnit === 'ACRES' ? 'acres' : 'ha'})
                   </Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={customWidth}
-                    onChange={(e) => onCustomWidthChange(e.target.value)}
-                    className="bg-secondary/50"
-                    placeholder={inputUnit === 'ACRES' ? '0.125' : '0.05'}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={customWidth}
+                      onChange={(e) => onCustomWidthChange(e.target.value)}
+                      className="bg-secondary/50"
+                      placeholder={inputUnit === 'ACRES' ? '0.125' : '0.05'}
+                    />
+                    <button
+                      type="button"
+                      className="px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                      disabled={!onAreaQueueChange}
+                      onClick={() => {
+                        const v = parseFloat(customWidth);
+                        if (!v || v <= 0 || !onAreaQueueChange) return;
+                        onAreaQueueChange([...areaQueue, { value: v, unit: inputUnit as 'ACRES' | 'HECTARES' }]);
+                        onCustomWidthChange('');
+                      }}
+                    >
+                      + Add
+                    </button>
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {(() => {
                       const v = parseFloat(customWidth) || 0;
@@ -201,6 +216,47 @@ export function WorkspaceSidebar({
                       return `≈ ${sqm.toFixed(0)} m² · square ${side.toFixed(1)}m × ${side.toFixed(1)}m`;
                     })()}
                   </p>
+
+                  {areaQueue.length > 0 && (
+                    <div className="space-y-1 p-2 rounded-md bg-secondary/40 border border-border/50">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs font-medium">
+                          Plot Queue ({areaQueue.length})
+                        </p>
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-destructive"
+                          onClick={() => onAreaQueueChange?.([])}
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {areaQueue.map((q, i) => (
+                          <div
+                            key={i}
+                            className="flex items-center justify-between text-xs px-2 py-1 rounded bg-background/60"
+                          >
+                            <span>
+                              #{i + 1} · {q.value} {q.unit === 'ACRES' ? 'ac' : 'ha'}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-destructive"
+                              onClick={() =>
+                                onAreaQueueChange?.(areaQueue.filter((_, idx) => idx !== i))
+                              }
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground pt-1">
+                        Click "Auto-Subdivide" to create all queued plots in one go.
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
