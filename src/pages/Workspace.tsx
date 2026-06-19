@@ -489,6 +489,8 @@ export default function Workspace() {
           invalidPlotCount={state.invalidPlotCount}
           roadAreaSqm={state.roadAreaSqm}
           efficiency={state.efficiency}
+          areaQueue={state.areaQueue}
+          onAreaQueueChange={state.setAreaQueue}
         />
       </div>
 
