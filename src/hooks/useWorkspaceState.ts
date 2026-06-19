@@ -137,6 +137,7 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
     setCustomDepth,
     setRoadWidth,
     setRiparianBufferEnabled,
+    setAreaQueue,
     setParcelCoordinates,
     setAccessRoadMode,
     setAccessEdges,
