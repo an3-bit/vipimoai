@@ -174,6 +174,7 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
     customDepth,
     roadWidth,
     riparianBufferEnabled,
+    areaQueue,
     parcelCoordinates,
     accessRoadMode,
     accessEdges,
