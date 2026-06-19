@@ -46,6 +46,7 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
   const [customDepth, setCustomDepth] = useState('100');
   const [roadWidth, setRoadWidth] = useState('9');
   const [riparianBufferEnabled, setRiparianBufferEnabled] = useState(true);
+  const [areaQueue, setAreaQueue] = useState<{ value: number; unit: 'ACRES' | 'HECTARES' }[]>([]);
   
   // Parcel data
   const [parcelCoordinates, setParcelCoordinates] = useState<Coordinate[]>([]);
