@@ -41,7 +41,7 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
   
   // Form state
   const [plotSize, setPlotSize] = useState('50x100ft');
-  const [inputUnit, setInputUnit] = useState<'FEET' | 'METERS'>('FEET');
+  const [inputUnit, setInputUnit] = useState<'FEET' | 'METERS' | 'ACRES' | 'HECTARES'>('FEET');
   const [customWidth, setCustomWidth] = useState('50');
   const [customDepth, setCustomDepth] = useState('100');
   const [roadWidth, setRoadWidth] = useState('9');
