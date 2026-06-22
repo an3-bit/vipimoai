@@ -3,6 +3,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { Project, Parcel, Subdivision, Plot, Beacon, Coordinate, SubdivisionFormData } from '@/types/survey';
 import { calculatePolygonArea, calculatePerimeter, calculateCentroid } from '@/lib/geometry';
 import { toast } from 'sonner';
+import { djangoSubdivide, SubdivideRequest } from '@/lib/apiClient';
+
 
 // Projects
 export function useProjects() {
@@ -295,17 +297,24 @@ export function useAISubdivision() {
       parcelCoordinates: Coordinate[]; 
       formData: SubdivisionFormData 
     }) => {
-      const { data, error } = await supabase.functions.invoke('ai-subdivide', {
-        body: { 
-          parcelCoordinates,
-          ...formData,
-        },
-      });
+      // Build the Django API request payload
+      const payload: SubdivideRequest = {
+        parcelCoordinates,
+        strategy: (formData as any).strategy || 'auto_fit',
+        plot_width: (formData as any).plot_width,
+        plot_depth: (formData as any).plot_depth,
+        target_plot_count: (formData as any).target_plot_count,
+        road_setback_m: (formData as any).road_setback_m,
+        side_setback_m: (formData as any).side_setback_m,
+        orientation_degrees: (formData as any).orientation_degrees,
+        notes: (formData as any).notes,
+        target_areas: (formData as any).target_areas,
+        crs_name: (formData as any).crs_name || 'EPSG:21037',
+      };
 
-      if (error) throw error;
-      return data;
+      return djangoSubdivide(payload);
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast.error('AI subdivision failed: ' + error.message);
     },
   });

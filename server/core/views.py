@@ -177,9 +177,6 @@ class AISubdivisionView(APIView):
         if not parcel_coordinates or len(parcel_coordinates) < 3:
             return Response({'error': 'At least 3 coordinates required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not plot_width or not plot_depth or float(plot_width) <= 0 or float(plot_depth) <= 0:
-            return Response({'error': 'Valid plot dimensions required'}, status=status.HTTP_400_BAD_REQUEST)
-
         # 1. Run geometric calculations
         parcel_area = calculate_polygon_area(parcel_coordinates)
         bbox = get_bounding_box(parcel_coordinates)
@@ -192,104 +189,134 @@ class AISubdivisionView(APIView):
             {'lat': bbox['maxLat'], 'lng': bbox['minLng']}
         )
 
-        sub_results = subdivide_rectangular(
-            parcel_coordinates,
-            plot_width,
-            plot_depth,
-            road_setback_m,
-            side_setback_m,
-            strategy,
-            target_plot_count
-        )
-
-        plots = sub_results['plots']
-        beacons = sub_results['beacons']
-        suggestions = sub_results['suggestions']
-
-        # 2. Call Lovable AI API if key is present
-        lovable_api_key = os.getenv('LOVABLE_API_KEY')
+        plots = []
+        beacons = []
+        suggestions = []
         ai_analysis = None
+        crs_name = data.get('crs_name', 'EPSG:21037')
 
-        if lovable_api_key:
-            try:
-                ai_prompt = (
-                    f"You are a land surveying expert. Analyze this subdivision request and provide optimization suggestions.\n\n"
-                    f"Parcel Details:\n"
-                    f"- Total Area: {parcel_area:.2f} sq meters\n"
-                    f"- Approximate Width: {parcel_width:.2f} meters\n"
-                    f"- Approximate Depth: {parcel_depth:.2f} meters\n"
-                    f"- Coordinates: {len(parcel_coordinates)} vertices\n\n"
-                    f"Requested Subdivision:\n"
-                    f"- Plot Size: {plot_width}m x {plot_depth}m ({float(plot_width)*float(plot_depth)} sq meters per plot)\n"
-                    f"- Strategy: {strategy}\n"
-                    f"- Target Plot Count: {target_plot_count or 'Auto-fit'}\n"
-                    f"- Road Setback: {road_setback_m}m\n"
-                    f"- Side Setback: {side_setback_m}m\n"
-                    f"- Orientation: {orientation_degrees}°\n"
-                    f"- Notes: {notes or 'None'}\n\n"
-                    f"Provide a JSON response with:\n"
-                    f"1. \"feasibility\": boolean - can the requested subdivision work?\n"
-                    f"2. \"max_plots\": number - maximum plots that can fit\n"
-                    f"3. \"efficiency_percent\": number - land utilization percentage\n"
-                    f"4. \"recommendations\": array of strings - optimization tips\n"
-                    f"5. \"alternative_layouts\": array of {{width, depth, count, description}}\n\n"
-                    f"Keep response concise and actionable. Respond only with valid JSON."
-                )
+        if strategy == 'succession':
+            raw_target_areas = data.get('target_areas', [])
+            if not raw_target_areas:
+                return Response({'error': 'target_areas array is required for succession strategy'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Convert targets to square meters
+            target_areas_sqm = []
+            for item in raw_target_areas:
+                if isinstance(item, dict):
+                    val = float(item.get('value', 0))
+                    unit = item.get('unit', 'SQM').upper()
+                    if unit == 'HECTARES' or unit == 'HA':
+                        target_areas_sqm.append(val * 10000.0)
+                    elif unit == 'ACRES' or unit == 'AC':
+                        target_areas_sqm.append(val * 4046.8564)
+                    else:
+                        target_areas_sqm.append(val)
+                else:
+                    target_areas_sqm.append(float(item))
 
-                headers = {
-                    'Authorization': f'Bearer {lovable_api_key}',
-                    'Content-Type': 'application/json',
-                }
-                body = {
-                    'model': 'google/gemini-2.5-flash',
-                    'messages': [
-                        {'role': 'system', 'content': 'You are a professional land surveyor AI. Respond only with valid JSON.'},
-                        {'role': 'user', 'content': ai_prompt}
-                    ]
-                }
-                
-                ai_response = requests.post(
-                    'https://ai.gateway.lovable.dev/v1/chat/completions',
-                    headers=headers,
-                    json=body,
-                    timeout=10
-                )
+            from .geometry import solve_succession_subdivision
+            plots, beacons = solve_succession_subdivision(parcel_coordinates, target_areas_sqm, crs_name)
+            
+            total_plot_area = sum([p['area_sqm'] for p in plots])
+            efficiency = (total_plot_area / parcel_area) * 100 if parcel_area > 0 else 0
+        else:
+            if not plot_width or not plot_depth or float(plot_width) <= 0 or float(plot_depth) <= 0:
+                return Response({'error': 'Valid plot dimensions required'}, status=status.HTTP_400_BAD_REQUEST)
 
-                if ai_response.status_code == 200:
-                    ai_data = ai_response.json()
-                    content = ai_data.get('choices', [{}])[0].get('message', {}).get('content', '')
-                    if content:
-                        # Parse JSON block
-                        import re
-                        json_match = re.search(r'\{[\s\S]*\}', content)
-                        if json_match:
-                            try:
-                                ai_analysis = json.loads(json_match.group(0))
-                            except json.JSONDecodeError:
-                                pass
-            except Exception as e:
-                # Silently fail AI call and fallback to standard response
-                pass
+            sub_results = subdivide_rectangular(
+                parcel_coordinates,
+                plot_width,
+                plot_depth,
+                road_setback_m,
+                side_setback_m,
+                strategy,
+                target_plot_count
+            )
 
-        # Parse recommendations and alternatives from AI response if available
-        if ai_analysis:
-            if 'recommendations' in ai_analysis:
-                for rec in ai_analysis['recommendations']:
-                    suggestions.append({
-                        'type': 'alternative_layout',
-                        'message': rec
-                    })
-            if 'alternative_layouts' in ai_analysis:
-                for alt in ai_analysis['alternative_layouts']:
-                    suggestions.append({
-                        'type': 'alternative_layout',
-                        'message': alt.get('description', f"Alternative: {alt.get('width')}m x {alt.get('depth')}m for {alt.get('count')} plots"),
-                        'suggested_width': alt.get('width'),
-                        'suggested_depth': alt.get('depth'),
-                        'suggested_count': alt.get('count'),
-                    })
+            plots = sub_results['plots']
+            beacons = sub_results['beacons']
+            suggestions = sub_results['suggestions']
 
-        efficiency = ai_analysis.get('efficiency_percent') if ai_analysis else ((len(plots) * float(plot_width) * float(plot_depth)) / parcel_area * 100)
+            # Call Lovable AI API if key is present
+            lovable_api_key = os.getenv('LOVABLE_API_KEY')
+            if lovable_api_key:
+                try:
+                    ai_prompt = (
+                        f"You are a land surveying expert. Analyze this subdivision request and provide optimization suggestions.\n\n"
+                        f"Parcel Details:\n"
+                        f"- Total Area: {parcel_area:.2f} sq meters\n"
+                        f"- Approximate Width: {parcel_width:.2f} meters\n"
+                        f"- Approximate Depth: {parcel_depth:.2f} meters\n"
+                        f"- Coordinates: {len(parcel_coordinates)} vertices\n\n"
+                        f"Requested Subdivision:\n"
+                        f"- Plot Size: {plot_width}m x {plot_depth}m ({float(plot_width)*float(plot_depth)} sq meters per plot)\n"
+                        f"- Strategy: {strategy}\n"
+                        f"- Target Plot Count: {target_plot_count or 'Auto-fit'}\n"
+                        f"- Road Setback: {road_setback_m}m\n"
+                        f"- Side Setback: {side_setback_m}m\n"
+                        f"- Orientation: {orientation_degrees}°\n"
+                        f"- Notes: {notes or 'None'}\n\n"
+                        f"Provide a JSON response with:\n"
+                        f"1. \"feasibility\": boolean - can the requested subdivision work?\n"
+                        f"2. \"max_plots\": number - maximum plots that can fit\n"
+                        f"3. \"efficiency_percent\": number - land utilization percentage\n"
+                        f"4. \"recommendations\": array of strings - optimization tips\n"
+                        f"5. \"alternative_layouts\": array of {{width, depth, count, description}}\n\n"
+                        f"Keep response concise and actionable. Respond only with valid JSON."
+                    )
+
+                    headers = {
+                        'Authorization': f'Bearer {lovable_api_key}',
+                        'Content-Type': 'application/json',
+                    }
+                    body = {
+                        'model': 'google/gemini-2.5-flash',
+                        'messages': [
+                            {'role': 'system', 'content': 'You are a professional land surveyor AI. Respond only with valid JSON.'},
+                            {'role': 'user', 'content': ai_prompt}
+                        ]
+                    }
+                    
+                    ai_response = requests.post(
+                        'https://ai.gateway.lovable.dev/v1/chat/completions',
+                        headers=headers,
+                        json=body,
+                        timeout=10
+                    )
+
+                    if ai_response.status_code == 200:
+                        ai_data = ai_response.json()
+                        content = ai_data.get('choices', [{}])[0].get('message', {}).get('content', '')
+                        if content:
+                            import re
+                            json_match = re.search(r'\{[\s\S]*\}', content)
+                            if json_match:
+                                try:
+                                    ai_analysis = json.loads(json_match.group(0))
+                                except json.JSONDecodeError:
+                                    pass
+                except Exception as e:
+                    pass
+
+            if ai_analysis:
+                if 'recommendations' in ai_analysis:
+                    for rec in ai_analysis['recommendations']:
+                        suggestions.append({
+                            'type': 'alternative_layout',
+                            'message': rec
+                        })
+                if 'alternative_layouts' in ai_analysis:
+                    for alt in ai_analysis['alternative_layouts']:
+                        suggestions.append({
+                            'type': 'alternative_layout',
+                            'message': alt.get('description', f"Alternative: {alt.get('width')}m x {alt.get('depth')}m for {alt.get('count')} plots"),
+                            'suggested_width': alt.get('width'),
+                            'suggested_depth': alt.get('depth'),
+                            'suggested_count': alt.get('count'),
+                        })
+
+            efficiency = ai_analysis.get('efficiency_percent') if ai_analysis else ((len(plots) * float(plot_width) * float(plot_depth)) / parcel_area * 100)
 
         response_data = {
             'success': True,
@@ -307,6 +334,7 @@ class AISubdivisionView(APIView):
                 'side_setback_m': side_setback_m,
                 'orientation_degrees': orientation_degrees,
                 'target_plot_count': target_plot_count,
+                'crs_name': crs_name,
             },
             'results': {
                 'total_plots': len(plots),

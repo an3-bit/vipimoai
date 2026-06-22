@@ -4,10 +4,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Download, FileJson, Send, CheckCircle, FileOutput, Loader2, AlertTriangle, User } from 'lucide-react';
 import { toast } from 'sonner';
-import { useProjectPlots } from '@/hooks/useSurvey';
+import { useProjectPlots, useProject } from '@/hooks/useSurvey';
 import { useProfile } from '@/hooks/useProfile';
 import { sqmToHectares } from '@/lib/geometry';
-import { generateArdhisasaJSON, generatePDF, downloadFile } from '@/lib/exports';
+import { generateArdhisasaJSON, generatePDF, generateFormLRA27, downloadFile } from '@/lib/exports';
+import { Coordinate, Beacon } from '@/types/survey';
 
 interface MutationFormModalProps {
   open: boolean;
@@ -28,11 +29,17 @@ export function MutationFormModal({
 }: MutationFormModalProps) {
   // Fetch surveyor profile for dynamic header
   const { data: profile } = useProfile();
-  // Fetch real plot data from Supabase
+  // Fetch project including parent parcel coordinates
+  const { data: project } = useProject(projectId);
+  // Fetch real plot data from Supabase/MySQL
   const { data: plots, isLoading } = useProjectPlots(projectId);
 
   const motherTitle = `${projectName.toUpperCase().replace(/\s+/g, '/')}/0000`;
-  const totalAreaHa = sqmToHectares(parcelAreaSqm);
+  
+  const parcelCoords = project?.parcels?.[0]?.coordinates as Coordinate[] || [];
+  const parcelArea = Number(project?.parcels?.[0]?.area_sqm) || parcelAreaSqm || 0;
+  const perimeter = Number(project?.parcels?.[0]?.perimeter_m) || 0;
+  const totalAreaHa = sqmToHectares(parcelArea);
 
   // Transform plots to child titles with HECTARES
   const childTitles = (plots || []).map((plot: any, index: number) => {
@@ -46,10 +53,36 @@ export function MutationFormModal({
     };
   });
 
+  // Reconstruct unique beacons list from plot corners
+  const getBeaconsList = (): Beacon[] => {
+    const list: Beacon[] = [];
+    let beaconNum = 1;
+    const seen = new Set<string>();
+    
+    (plots || []).forEach((plot: any) => {
+      (plot.coordinates || []).forEach((coord: Coordinate) => {
+        const key = `${coord.lat.toFixed(6)},${coord.lng.toFixed(6)}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          list.push({
+            id: crypto.randomUUID(),
+            beacon_number: beaconNum++,
+            latitude: coord.lat,
+            longitude: coord.lng,
+            description: `BK${beaconNum - 1}`,
+          });
+        }
+      });
+    });
+
+    return list;
+  };
+
   const handleExportArdhisasa = async () => {
     toast.info('Generating Ardhisasa-compliant JSON...');
     
     try {
+      const beacons = getBeaconsList();
       const exportData = {
         project: {
           name: projectName,
@@ -58,9 +91,9 @@ export function MutationFormModal({
           motherTitle,
         },
         parcel: {
-          coordinates: [],
-          areaSqm: parcelAreaSqm,
-          perimeterM: 0,
+          coordinates: parcelCoords,
+          areaSqm: parcelArea,
+          perimeterM: perimeter,
         },
         plots: (plots || []).map((plot: any) => ({
           id: plot.id || `plot-${plot.plot_number}`,
@@ -71,7 +104,7 @@ export function MutationFormModal({
           depth_m: plot.depth_m,
           is_partial: plot.is_partial,
         })),
-        beacons: [],
+        beacons,
       };
 
       const json = generateArdhisasaJSON(exportData);
@@ -86,6 +119,7 @@ export function MutationFormModal({
     toast.info('Generating PDF Mutation Form...');
     
     try {
+      const beacons = getBeaconsList();
       const exportData = {
         project: {
           name: projectName,
@@ -94,9 +128,9 @@ export function MutationFormModal({
           motherTitle,
         },
         parcel: {
-          coordinates: [],
-          areaSqm: parcelAreaSqm,
-          perimeterM: 0,
+          coordinates: parcelCoords,
+          areaSqm: parcelArea,
+          perimeterM: perimeter,
         },
         plots: (plots || []).map((plot: any) => ({
           id: plot.id || `plot-${plot.plot_number}`,
@@ -107,7 +141,7 @@ export function MutationFormModal({
           depth_m: plot.depth_m,
           is_partial: plot.is_partial,
         })),
-        beacons: [],
+        beacons,
       };
 
       const pdfBlob = await generatePDF(exportData);
@@ -118,13 +152,53 @@ export function MutationFormModal({
     }
   };
 
+  const handleExportFormLRA27 = async () => {
+    toast.info('Generating official Form LRA 27...');
+    
+    try {
+      const beacons = getBeaconsList();
+      const exportData = {
+        project: {
+          name: projectName,
+          clientName: clientName || 'Registered Owner',
+          date: new Date().toLocaleDateString(),
+          motherTitle,
+          surveyorLicense: profile?.license_number || 'LS/2026/0921',
+          surveyorName: profile?.full_name || 'Licensed Surveyor',
+        },
+        parcel: {
+          coordinates: parcelCoords,
+          areaSqm: parcelArea,
+          perimeterM: perimeter,
+        },
+        plots: (plots || []).map((plot: any) => ({
+          id: plot.id || `plot-${plot.plot_number}`,
+          plot_number: plot.plot_number,
+          coordinates: plot.coordinates || [],
+          area_sqm: plot.area_sqm || 0,
+          width_m: plot.width_m,
+          depth_m: plot.depth_m,
+          is_partial: plot.is_partial,
+        })),
+        beacons,
+      };
+
+      const pdfBlob = await generateFormLRA27(exportData);
+      downloadFile(pdfBlob, `${projectName.replace(/\s+/g, '_')}_form_LRA_27.pdf`);
+      toast.success('Official Form LRA 27 PDF exported successfully');
+    } catch (error) {
+      console.error(error);
+      toast.error('Form LRA 27 export failed');
+    }
+  };
+
   const plotCount = childTitles.length;
   const approvedCount = childTitles.filter(t => t.status === 'Approved').length;
   const rejectedCount = childTitles.filter(t => t.status === 'Rejected').length;
 
   // Calculate actual efficiency
   const totalPlotArea = (plots || []).reduce((sum: number, p: any) => sum + (p.area_sqm || 0), 0);
-  const efficiency = parcelAreaSqm > 0 ? ((totalPlotArea / parcelAreaSqm) * 100).toFixed(1) : '0';
+  const efficiency = parcelArea > 0 ? ((totalPlotArea / parcelArea) * 100).toFixed(1) : '0';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -156,8 +230,8 @@ export function MutationFormModal({
                   <h2 className="text-lg font-bold mt-1">THE LAND REGISTRATION ACT</h2>
                   <p className="text-sm text-muted-foreground">(Cap 300 Laws of Kenya)</p>
                   <div className="mt-4 inline-block px-4 py-2 bg-primary/10 rounded-lg">
-                    <p className="text-xl font-bold text-primary">FORM RL 7A</p>
-                    <p className="text-xs text-muted-foreground">Application for Subdivision</p>
+                    <p className="text-xl font-bold text-primary">FORM LRA 27</p>
+                    <p className="text-xs text-muted-foreground">Mutation Form</p>
                   </div>
                 </div>
 
@@ -303,11 +377,20 @@ export function MutationFormModal({
             </Button>
             <Button 
               variant="outline"
+              onClick={handleExportFormLRA27}
+              disabled={plotCount === 0}
+              className="border-primary/50 text-primary hover:bg-primary/10"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Download Form LRA 27
+            </Button>
+            <Button 
+              variant="outline"
               onClick={handleExportPDF}
               disabled={plotCount === 0}
             >
               <Download className="h-4 w-4 mr-2" />
-              Download PDF
+              Download RL 7A PDF
             </Button>
             <Button 
               onClick={() => toast.info('Email integration coming soon')}

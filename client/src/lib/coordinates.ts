@@ -1,14 +1,17 @@
 import proj4 from 'proj4';
 import { Coordinate } from '@/types/survey';
 
-// Define coordinate reference systems
-// Arc 1960 / UTM zone 37N (Kenya)
-const ARC1960_UTM37N = '+proj=utm +zone=37 +a=6378249.145 +rf=293.465 +towgs84=-160,-6,-302,0,0,0,0 +units=m +no_defs';
+// Define coordinate reference systems (Kenya)
+// Arc 1960 / UTM zone 37S (Kenya Central/East, including Nairobi)
+const ARC1960_UTM37S = '+proj=utm +zone=37 +south +a=6378249.145 +rf=293.465 +towgs84=-160,-6,-302,0,0,0,0 +units=m +no_defs';
+// Arc 1960 / UTM zone 36S (Kenya West, including Kisumu)
+const ARC1960_UTM36S = '+proj=utm +zone=36 +south +a=6378249.145 +rf=293.465 +towgs84=-160,-6,-302,0,0,0,0 +units=m +no_defs';
 // WGS84 (Standard GPS/Leaflet)
 const WGS84 = '+proj=longlat +datum=WGS84 +no_defs';
 
 // Register the projections
-proj4.defs('ARC1960_UTM37N', ARC1960_UTM37N);
+proj4.defs('ARC1960_UTM37S', ARC1960_UTM37S);
+proj4.defs('ARC1960_UTM36S', ARC1960_UTM36S);
 proj4.defs('WGS84', WGS84);
 
 export interface UTMCoordinate {
@@ -22,6 +25,14 @@ export interface CRSDetectionResult {
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   message: string;
   suggestedConversion: boolean;
+}
+
+/**
+ * Returns the appropriate UTM Zone for a given longitude in Kenya (36S for West, 37S for Central/East)
+ */
+export function getUTMZone(lng: number): number {
+  if (lng >= 30 && lng < 36) return 36;
+  return 37; // default to zone 37
 }
 
 /**
@@ -43,7 +54,7 @@ export function detectCRS(coordinates: Coordinate[]): CRSDetectionResult {
   // Check for WGS84 range
   if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
     // Check if it's specifically in Kenya region
-    if (lat >= -5 && lat <= 5 && lng >= 33 && lng <= 42) {
+    if (lat >= -5 && lat <= 5 && lng >= 30 && lng <= 42) {
       return {
         detectedCRS: 'WGS84',
         confidence: 'HIGH',
@@ -59,9 +70,9 @@ export function detectCRS(coordinates: Coordinate[]): CRSDetectionResult {
     };
   }
 
-  // Check for UTM range (Kenya is in zones 36-37)
+  // Check for UTM range (Kenya is in zones 36-37, Southern hemisphere uses false northing of 10,000,000)
   // Easting: typically 100,000 to 900,000
-  // Northing for Kenya: around 9,800,000 to 10,200,000 (near equator, southern hemisphere uses 10,000,000 false northing)
+  // Northing for Kenya: around 9,800,000 to 10,000,000 (just south of equator)
   if (
     (lng >= 100000 && lng <= 900000) && 
     (lat >= 9500000 && lat <= 10500000)
@@ -69,7 +80,7 @@ export function detectCRS(coordinates: Coordinate[]): CRSDetectionResult {
     return {
       detectedCRS: 'UTM',
       confidence: 'HIGH',
-      message: 'Coordinates detected as UTM/Arc 1960 (Kenya Zone 37N). Conversion recommended.',
+      message: 'Coordinates detected as UTM/Arc 1960 (Kenya Zone 36S/37S). Conversion recommended.',
       suggestedConversion: true,
     };
   }
@@ -94,12 +105,12 @@ export function detectCRS(coordinates: Coordinate[]): CRSDetectionResult {
 
 /**
  * Convert UTM coordinates to WGS84 (lat/lng)
- * Assumes Kenya UTM Zone 37N with Arc 1960 datum
+ * Assumes Kenya UTM Zone 36S or 37S with Arc 1960 datum
  */
 export function utmToWGS84(easting: number, northing: number, zone: number = 37): Coordinate {
   try {
-    // Define the UTM zone projection dynamically
-    const utmProj = `+proj=utm +zone=${zone} +a=6378249.145 +rf=293.465 +towgs84=-160,-6,-302,0,0,0,0 +units=m +no_defs`;
+    // Define the UTM zone projection dynamically with +south
+    const utmProj = `+proj=utm +zone=${zone} +south +a=6378249.145 +rf=293.465 +towgs84=-160,-6,-302,0,0,0,0 +units=m +no_defs`;
     
     const [lng, lat] = proj4(utmProj, WGS84, [easting, northing]);
     
@@ -107,25 +118,26 @@ export function utmToWGS84(easting: number, northing: number, zone: number = 37)
   } catch (error) {
     console.error('UTM to WGS84 conversion error:', error);
     // Fallback: simple approximate conversion for Kenya
-    return approximateUTMToWGS84(easting, northing);
+    return approximateUTMToWGS84(easting, northing, zone);
   }
 }
 
 /**
  * Convert WGS84 coordinates to UTM (Easting/Northing)
- * Returns Kenya Arc 1960 UTM Zone 37N format
+ * Returns Kenya Arc 1960 UTM Zone 36S/37S format
  */
-export function wgs84ToUTM(lat: number, lng: number, zone: number = 37): UTMCoordinate {
+export function wgs84ToUTM(lat: number, lng: number, zone?: number): UTMCoordinate {
+  const targetZone = zone || getUTMZone(lng);
   try {
-    const utmProj = `+proj=utm +zone=${zone} +a=6378249.145 +rf=293.465 +towgs84=-160,-6,-302,0,0,0,0 +units=m +no_defs`;
+    const utmProj = `+proj=utm +zone=${targetZone} +south +a=6378249.145 +rf=293.465 +towgs84=-160,-6,-302,0,0,0,0 +units=m +no_defs`;
     
     const [easting, northing] = proj4(WGS84, utmProj, [lng, lat]);
     
-    return { easting, northing, zone };
+    return { easting, northing, zone: targetZone };
   } catch (error) {
     console.error('WGS84 to UTM conversion error:', error);
     // Fallback: simple approximate conversion
-    return approximateWGS84ToUTM(lat, lng);
+    return approximateWGS84ToUTM(lat, lng, targetZone);
   }
 }
 
@@ -133,20 +145,14 @@ export function wgs84ToUTM(lat: number, lng: number, zone: number = 37): UTMCoor
  * Approximate UTM to WGS84 conversion (fallback)
  * Uses simplified math for Kenya region
  */
-function approximateUTMToWGS84(easting: number, northing: number): Coordinate {
-  // Kenya Zone 37N parameters
+function approximateUTMToWGS84(easting: number, northing: number, zone: number = 37): Coordinate {
   const falseEasting = 500000;
-  const falseNorthing = 0; // Northern hemisphere
-  const centralMeridian = 39; // Zone 37 central meridian
-  
-  // Simplified conversion (approximate for Kenya)
-  const k0 = 0.9996;
-  const a = 6378249.145; // Arc 1960 semi-major axis
+  const falseNorthing = 10000000; // Southern hemisphere
+  const centralMeridian = zone === 36 ? 33 : 39; // Zone 36 = 33E, Zone 37 = 39E
   
   const x = easting - falseEasting;
   const y = northing - falseNorthing;
   
-  // Very simplified - for accurate results use proj4
   const lat = y / 111320;
   const lng = centralMeridian + (x / (111320 * Math.cos(lat * Math.PI / 180)));
   
@@ -156,14 +162,15 @@ function approximateUTMToWGS84(easting: number, northing: number): Coordinate {
 /**
  * Approximate WGS84 to UTM conversion (fallback)
  */
-function approximateWGS84ToUTM(lat: number, lng: number): UTMCoordinate {
-  const centralMeridian = 39; // Zone 37
+function approximateWGS84ToUTM(lat: number, lng: number, zone: number = 37): UTMCoordinate {
+  const centralMeridian = zone === 36 ? 33 : 39; // Zone 36 = 33E, Zone 37 = 39E
   const falseEasting = 500000;
+  const falseNorthing = 10000000; // Southern hemisphere
   
   const easting = falseEasting + ((lng - centralMeridian) * 111320 * Math.cos(lat * Math.PI / 180));
-  const northing = lat * 111320;
+  const northing = falseNorthing + (lat * 111320);
   
-  return { easting, northing, zone: 37 };
+  return { easting, northing, zone };
 }
 
 /**
@@ -171,11 +178,12 @@ function approximateWGS84ToUTM(lat: number, lng: number): UTMCoordinate {
  */
 export function convertCoordinatesFromUTM(
   coordinates: { lat: number; lng: number }[], 
-  zone: number = 37
+  zone?: number
 ): Coordinate[] {
   return coordinates.map(coord => {
     // In UTM input, lat field contains Northing, lng field contains Easting
-    return utmToWGS84(coord.lng, coord.lat, zone);
+    const detectedZone = zone || getUTMZone(36.7); // Guess zone based on standard Kenya central if not provided
+    return utmToWGS84(coord.lng, coord.lat, detectedZone);
   });
 }
 

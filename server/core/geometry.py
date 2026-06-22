@@ -1,4 +1,5 @@
 import math
+import pyproj
 
 def calculate_distance(coord1, coord2):
     """Haversine formula to calculate the distance between two points in meters."""
@@ -187,3 +188,241 @@ def subdivide_rectangular(coordinates, plot_width, plot_depth, road_setback, sid
         })
 
     return {'plots': plots, 'beacons': beacons, 'suggestions': suggestions}
+
+
+# --- PLANAR MATH & SUCCESSION SLIDE LINE SPLITTER ---
+
+def get_transformers(crs_name="EPSG:21037"):
+    """
+    Resolves transformers for converting between WGS84 and the target UTM Zone.
+    Supports Kenya East (Zone 37S, default) and Kenya West (Zone 36S), 
+    supporting both Arc 1960 and WGS 84 UTM datum variants.
+    """
+    crs_name = crs_name.upper().strip()
+    
+    # Arc 1960 Ellipsoid parameters
+    arc1960_ellps = "+a=6378249.145 +rf=293.465 +towgs84=-160,-6,-302,0,0,0,0"
+    
+    if "36" in crs_name or "21036" in crs_name or "32736" in crs_name:
+        # Zone 36S (Western Kenya)
+        if "WGS84" in crs_name or "32736" in crs_name:
+            crs_spec = "+proj=utm +zone=36 +south +datum=WGS84 +units=m +no_defs"
+        else:
+            crs_spec = f"+proj=utm +zone=36 +south {arc1960_ellps} +units=m +no_defs"
+    else:
+        # Zone 37S (Default, Nairobi/Central/Eastern Kenya)
+        if "WGS84" in crs_name or "32737" in crs_name:
+            crs_spec = "+proj=utm +zone=37 +south +datum=WGS84 +units=m +no_defs"
+        else:
+            crs_spec = f"+proj=utm +zone=37 +south {arc1960_ellps} +units=m +no_defs"
+            
+    to_utm = pyproj.Transformer.from_crs("epsg:4326", crs_spec, always_xy=True)
+    to_wgs84 = pyproj.Transformer.from_crs(crs_spec, "epsg:4326", always_xy=True)
+    return to_utm, to_wgs84
+
+def planar_polygon_area(coords):
+    """Calculates flat 2D Cartesian polygon area using the Shoelace formula."""
+    n = len(coords)
+    if n < 3:
+        return 0.0
+    area = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        x1, y1 = coords[i]
+        x2, y2 = coords[j]
+        area += x1 * y2 - x2 * y1
+    return abs(area) / 2.0
+
+def planar_centroid(coords):
+    """Calculates flat 2D Cartesian centroid of a polygon."""
+    n = len(coords)
+    if n < 3:
+        return (0.0, 0.0)
+    cx = 0.0
+    cy = 0.0
+    area = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        x1, y1 = coords[i]
+        x2, y2 = coords[j]
+        factor = x1 * y2 - x2 * y1
+        cx += (x1 + x2) * factor
+        cy += (y1 + y2) * factor
+        area += factor
+    if abs(area) < 1e-9:
+        return coords[0]
+    area = area / 2.0
+    cx = cx / (6.0 * area)
+    cy = cy / (6.0 * area)
+    return (cx, cy)
+
+def line_intersection(p1, p2, a, b, c):
+    """Computes intersection of segment p1-p2 with line ax + by + c = 0."""
+    x1, y1 = p1
+    x2, y2 = p2
+    d1 = a * x1 + b * y1 + c
+    d2 = a * x2 + b * y2 + c
+    if abs(d1 - d2) < 1e-9:
+        return p1
+    t = d1 / (d1 - d2)
+    x = x1 + t * (x2 - x1)
+    y = y1 + t * (y2 - y1)
+    return (x, y)
+
+def clip_polygon_halfplane(poly, a, b, c):
+    """Clips polygon to half-plane ax + by + c >= 0 (Sutherland-Hodgman)."""
+    clipped = []
+    if not poly:
+        return clipped
+    for i in range(len(poly)):
+        p1 = poly[i]
+        p2 = poly[(i + 1) % len(poly)]
+        d1 = a * p1[0] + b * p1[1] + c
+        d2 = a * p2[0] + b * p2[1] + c
+        p1_inside = d1 >= -1e-9
+        p2_inside = d2 >= -1e-9
+        if p1_inside and p2_inside:
+            clipped.append(p2)
+        elif p1_inside and not p2_inside:
+            clipped.append(line_intersection(p1, p2, a, b, c))
+        elif not p1_inside and p2_inside:
+            clipped.append(line_intersection(p1, p2, a, b, c))
+            clipped.append(p2)
+    return clipped
+
+def get_inward_normal(poly):
+    """Computes normal vector of the first edge pointing into the polygon."""
+    p1 = poly[0]
+    p2 = poly[-1]
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    length = math.sqrt(dx**2 + dy**2)
+    if length < 1e-9:
+        return (1.0, 0.0)
+    ux, uy = dx/length, dy/length
+    n1x, n1y = -uy, ux
+    
+    # Centroid relative to edge midpoint
+    cx, cy = planar_centroid(poly)
+    mx = (p1[0] + p2[0]) / 2.0
+    my = (p1[1] + p2[1]) / 2.0
+    rx = cx - mx
+    ry = cy - my
+    
+    if rx * n1x + ry * n1y >= 0:
+        return (n1x, n1y)
+    else:
+        return (uy, -ux)
+
+def slide_line_split(poly, target_area, normal_vector=None):
+    """Slices a polygon into a target area using binary search and clipping."""
+    if not poly or len(poly) < 3:
+        return [], []
+        
+    if normal_vector is None:
+        normal_vector = get_inward_normal(poly)
+        
+    nx, ny = normal_vector
+    
+    # Project all points onto the normal vector
+    projections = [p[0] * nx + p[1] * ny for p in poly]
+    min_proj = min(projections)
+    max_proj = max(projections)
+    
+    low = min_proj
+    high = max_proj
+    best_t = min_proj
+    
+    # Run binary search
+    for _ in range(60):
+        t = (low + high) / 2.0
+        # Clipper equation for anchor side: -nx * x - ny * y + t >= 0
+        clipped = clip_polygon_halfplane(poly, -nx, -ny, t)
+        area = planar_polygon_area(clipped)
+        
+        if area < target_area:
+            low = t
+        else:
+            high = t
+            best_t = t
+            
+    plot = clip_polygon_halfplane(poly, -nx, -ny, best_t)
+    remainder = clip_polygon_halfplane(poly, nx, ny, -best_t)
+    return plot, remainder
+
+def solve_succession_subdivision(parent_coords, target_areas, crs_name="EPSG:21037"):
+    """
+    Sequentially subdivides a parent parcel into a list of target plot areas.
+    Returns generated plots and coordinate beacon definitions.
+    """
+    to_utm, to_wgs84 = get_transformers(crs_name)
+    
+    # Project parent coords to UTM
+    utm_parent = []
+    for c in parent_coords:
+        x, y = to_utm.transform(float(c['lng']), float(c['lat']))
+        utm_parent.append((x, y))
+        
+    # Ensure coordinates are in clockwise or counter-clockwise order
+    # Shoelace formula returns positive area, let's keep polygon vertices in order
+    current_parcel = utm_parent
+    plots = []
+    
+    for idx, target_sqm in enumerate(target_areas):
+        if not current_parcel or len(current_parcel) < 3:
+            break
+            
+        # For the last plot, it's just the remainder!
+        if idx == len(target_areas) - 1:
+            plot_utm = current_parcel
+            current_parcel = []
+        else:
+            plot_utm, current_parcel = slide_line_split(current_parcel, target_sqm)
+            
+        if not plot_utm or len(plot_utm) < 3:
+            continue
+            
+        # Convert UTM coordinates back to WGS84
+        plot_wgs84 = []
+        for x, y in plot_utm:
+            lng, lat = to_wgs84.transform(x, y)
+            plot_wgs84.append({'lat': lat, 'lng': lng})
+            
+        area_sqm = planar_polygon_area(plot_utm)
+        cx_utm, cy_utm = planar_centroid(plot_utm)
+        clng, clat = to_wgs84.transform(cx_utm, cy_utm)
+        
+        # Approximate dimensions
+        xs = [p[0] for p in plot_utm]
+        ys = [p[1] for p in plot_utm]
+        w = max(xs) - min(xs)
+        d = max(ys) - min(ys)
+        
+        plots.append({
+            'plot_number': idx + 1,
+            'coordinates': plot_wgs84,
+            'area_sqm': area_sqm,
+            'width_m': w,
+            'depth_m': d,
+            'centroid': {'lat': clat, 'lng': clng},
+            'is_partial': False,
+            'status': 'valid'
+        })
+        
+    # Generate beacons with UTM credentials
+    beacons = []
+    beacon_counter = 1
+    for p in plots:
+        for offset, coord in enumerate(p['coordinates']):
+            x, y = to_utm.transform(coord['lng'], coord['lat'])
+            beacons.append({
+                'beacon_number': beacon_counter,
+                'latitude': coord['lat'],
+                'longitude': coord['lng'],
+                'easting': x,
+                'northing': y,
+                'description': f"Plot {p['plot_number']} - Corner {offset + 1}"
+            })
+            beacon_counter += 1
+            
+    return plots, beacons
