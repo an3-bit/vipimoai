@@ -1,11 +1,11 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { MapContainer, TileLayer, Polygon, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Coordinate, Beacon, Plot } from '@/types/survey';
 import { formatCoordinate } from '@/lib/geometry';
 
-// Fix for default marker icons in Leaflet with webpack/vite
+// Fix for default marker icons in Leaflet with Vite
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
@@ -13,6 +13,92 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
+// ─── Tile configs (all free, no API key required) ────────────────────────────
+const TILE_LAYERS = {
+  standard: {
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+  },
+  satellite: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution:
+      '&copy; <a href="https://www.esri.com/">Esri</a>, Maxar, GeoEye, Earthstar Geographics',
+    maxZoom: 19,
+  },
+};
+
+// ─── Icon factories ───────────────────────────────────────────────────────────
+const createBeaconIcon = (label: string) =>
+  new L.DivIcon({
+    className: '',
+    html: `
+      <div style="
+        width:22px;height:22px;
+        background:rgba(239,68,68,0.92);
+        border:2px solid #0a0f1a;
+        border-radius:50%;
+        box-shadow:0 0 10px rgba(239,68,68,0.65),0 0 3px #000;
+        display:flex;align-items:center;justify-content:center;
+      ">
+        <span style="color:#fff;font-size:8px;font-weight:700;font-family:monospace;">${label}</span>
+      </div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+    popupAnchor: [0, -13],
+  });
+
+const createPlotBeaconIcon = () =>
+  new L.DivIcon({
+    className: '',
+    html: `<div style="
+      width:12px;height:12px;
+      background:#00d4aa;
+      border:1.5px solid #0a0f1a;
+      border-radius:50%;
+      box-shadow:0 0 6px rgba(0,212,170,0.55);
+    "></div>`,
+    iconSize: [12, 12],
+    iconAnchor: [6, 6],
+  });
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function fmtDMS(val: number, isLat: boolean): string {
+  const abs = Math.abs(val);
+  const deg = Math.floor(abs);
+  const minFull = (abs - deg) * 60;
+  const min = Math.floor(minFull);
+  const sec = ((minFull - min) * 60).toFixed(2);
+  const dir = isLat ? (val >= 0 ? 'N' : 'S') : val >= 0 ? 'E' : 'W';
+  return `${deg}°${min}'${sec}"${dir}`;
+}
+
+// ─── Internal sub-components ──────────────────────────────────────────────────
+function MapController({ coordinates }: { coordinates?: Coordinate[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (coordinates && coordinates.length > 0) {
+      const bounds = L.latLngBounds(coordinates.map((c) => [c.lat, c.lng] as [number, number]));
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+  }, [coordinates, map]);
+  return null;
+}
+
+function CoordinateTracker({
+  onMove,
+}: {
+  onMove: (coord: Coordinate | null) => void;
+}) {
+  useMapEvents({
+    mousemove: (e) => onMove({ lat: e.latlng.lat, lng: e.latlng.lng }),
+    mouseout: () => onMove(null),
+  });
+  return null;
+}
+
+// ─── Props ────────────────────────────────────────────────────────────────────
 interface SurveyMapProps {
   parcelCoordinates?: Coordinate[];
   plots?: Plot[];
@@ -22,54 +108,7 @@ interface SurveyMapProps {
   showSatellite?: boolean;
 }
 
-// Custom beacon icon
-const createBeaconIcon = () => new L.DivIcon({
-  className: 'beacon-marker',
-  html: '<div style="width: 16px; height: 16px; background: #ef4444; border: 2px solid #0a0f1a; border-radius: 50%; box-shadow: 0 0 10px rgba(239,68,68,0.6);"></div>',
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-});
-
-// Plot beacon icon
-const createPlotBeaconIcon = () => new L.DivIcon({
-  className: 'plot-beacon-marker',
-  html: '<div style="width: 12px; height: 12px; background: #00d4aa; border: 1px solid #0a0f1a; border-radius: 50%; box-shadow: 0 0 6px rgba(0,212,170,0.5);"></div>',
-  iconSize: [12, 12],
-  iconAnchor: [6, 6],
-});
-
-function MapController({ coordinates }: { coordinates?: Coordinate[] }) {
-  const map = useMap();
-
-  useEffect(() => {
-    if (coordinates && coordinates.length > 0) {
-      const bounds = L.latLngBounds(
-        coordinates.map(c => [c.lat, c.lng] as [number, number])
-      );
-      map.fitBounds(bounds, { padding: [50, 50] });
-    }
-  }, [coordinates, map]);
-
-  return null;
-}
-
-function CoordinateTracker({ onHover }: { onHover?: (coord: Coordinate | null) => void }) {
-  useMapEvents({
-    mousemove: (e) => {
-      if (onHover) {
-        onHover({ lat: e.latlng.lat, lng: e.latlng.lng });
-      }
-    },
-    mouseout: () => {
-      if (onHover) {
-        onHover(null);
-      }
-    },
-  });
-
-  return null;
-}
-
+// ─── Component ────────────────────────────────────────────────────────────────
 export function SurveyMap({
   parcelCoordinates = [],
   plots = [],
@@ -79,31 +118,34 @@ export function SurveyMap({
   showSatellite = false,
 }: SurveyMapProps) {
   const [hoveredCoord, setHoveredCoord] = useState<Coordinate | null>(null);
+  const [showDMS, setShowDMS] = useState(false);
 
-  const beaconIcon = useMemo(() => createBeaconIcon(), []);
   const plotBeaconIcon = useMemo(() => createPlotBeaconIcon(), []);
 
-  const handleHover = (coord: Coordinate | null) => {
-    setHoveredCoord(coord);
-    onCoordinateHover?.(coord);
-  };
+  const handleHover = useCallback(
+    (coord: Coordinate | null) => {
+      setHoveredCoord(coord);
+      onCoordinateHover?.(coord);
+    },
+    [onCoordinateHover]
+  );
 
-  // Default center (can be overridden by parcel coordinates)
-  const defaultCenter: [number, number] = parcelCoordinates.length > 0
-    ? [parcelCoordinates[0].lat, parcelCoordinates[0].lng]
-    : [0, 0];
+  const defaultCenter: [number, number] =
+    parcelCoordinates.length > 0
+      ? [parcelCoordinates[0].lat, parcelCoordinates[0].lng]
+      : [-1.2921, 36.8219]; // Nairobi default
 
-  // Convert coordinates for Leaflet
-  const parcelPositions = useMemo(() => 
-    parcelCoordinates.map(c => [c.lat, c.lng] as [number, number]),
+  const parcelPositions = useMemo(
+    () => parcelCoordinates.map((c) => [c.lat, c.lng] as [number, number]),
     [parcelCoordinates]
   );
 
-  // Plot colors for visualization
   const plotColors = [
     '#00D4AA', '#00B4D8', '#7C3AED', '#F59E0B', '#EF4444',
     '#10B981', '#6366F1', '#EC4899', '#14B8A6', '#F97316',
   ];
+
+  const tile = showSatellite ? TILE_LAYERS.satellite : TILE_LAYERS.standard;
 
   return (
     <div className={`relative rounded-lg overflow-hidden border border-border ${className}`}>
@@ -113,24 +155,18 @@ export function SurveyMap({
         className="h-full w-full min-h-[400px]"
         style={{ background: '#0a0f1a' }}
       >
-        {/* Tile Layer - OpenStreetMap or Satellite */}
-        {showSatellite ? (
-          <TileLayer
-            attribution='&copy; <a href="https://www.esri.com/">Esri</a>'
-            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-          />
-        ) : (
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-        )}
+        {/* Tile Layer */}
+        <TileLayer
+          url={tile.url}
+          attribution={tile.attribution}
+          maxZoom={tile.maxZoom}
+        />
 
-        {/* Fit map to parcel bounds */}
+        {/* Fit to parcel on load */}
         <MapController coordinates={parcelCoordinates} />
 
-        {/* Track mouse coordinates */}
-        <CoordinateTracker onHover={handleHover} />
+        {/* Track cursor */}
+        <CoordinateTracker onMove={handleHover} />
 
         {/* Parent Parcel Polygon */}
         {parcelPositions.length > 2 && (
@@ -148,19 +184,13 @@ export function SurveyMap({
 
         {/* Subdivision Plots */}
         {plots.map((plot, index) => {
-          const plotPositions = plot.coordinates.map(c => [c.lat, c.lng] as [number, number]);
+          const plotPositions = plot.coordinates.map((c) => [c.lat, c.lng] as [number, number]);
           const color = plotColors[index % plotColors.length];
-
           return (
             <Polygon
               key={plot.id}
               positions={plotPositions}
-              pathOptions={{
-                color: color,
-                weight: 2,
-                fillColor: color,
-                fillOpacity: 0.3,
-              }}
+              pathOptions={{ color, weight: 2, fillColor: color, fillOpacity: 0.3 }}
             >
               <Popup>
                 <div className="text-sm">
@@ -174,27 +204,45 @@ export function SurveyMap({
           );
         })}
 
-        {/* Parcel Beacons */}
+        {/* Parcel Beacons (numbered) */}
         {beacons.map((beacon) => (
           <Marker
             key={beacon.id}
             position={[beacon.latitude, beacon.longitude]}
-            icon={beaconIcon}
+            icon={createBeaconIcon(String(beacon.beacon_number))}
           >
             <Popup>
-              <div className="text-sm font-mono">
-                <p className="font-semibold">Beacon {beacon.beacon_number}</p>
-                <p>Lat: {formatCoordinate(beacon.latitude)}</p>
-                <p>Lng: {formatCoordinate(beacon.longitude)}</p>
-                {beacon.northing && <p>N: {beacon.northing.toFixed(3)}</p>}
-                {beacon.easting && <p>E: {beacon.easting.toFixed(3)}</p>}
-                {beacon.description && <p className="mt-1 text-gray-500">{beacon.description}</p>}
+              <div className="text-sm font-mono min-w-[180px]">
+                <p className="font-bold text-red-600 mb-1">📍 Beacon {beacon.beacon_number}</p>
+                <p>
+                  <span className="text-muted-foreground">Lat: </span>
+                  {formatCoordinate(beacon.latitude)}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Lng: </span>
+                  {formatCoordinate(beacon.longitude)}
+                </p>
+                {beacon.northing && (
+                  <p>
+                    <span className="text-muted-foreground">N: </span>
+                    {beacon.northing.toFixed(3)}
+                  </p>
+                )}
+                {beacon.easting && (
+                  <p>
+                    <span className="text-muted-foreground">E: </span>
+                    {beacon.easting.toFixed(3)}
+                  </p>
+                )}
+                {beacon.description && (
+                  <p className="mt-1 text-gray-500 text-xs">{beacon.description}</p>
+                )}
               </div>
             </Popup>
           </Marker>
         ))}
 
-        {/* Plot corner beacons */}
+        {/* Plot corner dots */}
         {plots.flatMap((plot) =>
           plot.coordinates.map((coord, coordIndex) => (
             <Marker
@@ -204,7 +252,9 @@ export function SurveyMap({
             >
               <Popup>
                 <div className="text-sm font-mono">
-                  <p className="font-semibold">Plot {plot.plot_number} - Corner {coordIndex + 1}</p>
+                  <p className="font-semibold">
+                    Plot {plot.plot_number} – Corner {coordIndex + 1}
+                  </p>
                   <p>Lat: {formatCoordinate(coord.lat)}</p>
                   <p>Lng: {formatCoordinate(coord.lng)}</p>
                 </div>
@@ -214,26 +264,119 @@ export function SurveyMap({
         )}
       </MapContainer>
 
-      {/* Coordinate Display Overlay */}
-      {hoveredCoord && (
-        <div className="absolute bottom-4 left-4 bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-2 font-mono text-sm">
-          <span className="text-muted-foreground">Lat:</span>{' '}
-          <span className="text-survey-primary">{formatCoordinate(hoveredCoord.lat)}</span>
-          <span className="mx-2 text-border">|</span>
-          <span className="text-muted-foreground">Lng:</span>{' '}
-          <span className="text-survey-primary">{formatCoordinate(hoveredCoord.lng)}</span>
-        </div>
-      )}
+      {/* ── Live Coordinate HUD ────────────────────────────────────────────── */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 28,
+          left: 10,
+          zIndex: 1000,
+          pointerEvents: 'auto',
+        }}
+      >
+        {hoveredCoord ? (
+          <button
+            onClick={() => setShowDMS((v) => !v)}
+            title="Click to toggle DMS / Decimal"
+            style={{
+              background: 'rgba(10,15,26,0.88)',
+              backdropFilter: 'blur(6px)',
+              border: '1px solid rgba(0,212,170,0.45)',
+              borderRadius: 8,
+              padding: '6px 12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              cursor: 'pointer',
+              color: '#e2e8f0',
+              fontFamily: 'monospace',
+              fontSize: 12,
+              boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0 }}>
+              <circle cx="7" cy="7" r="5.5" stroke="#00d4aa" strokeWidth="1.4" />
+              <line x1="7" y1="0" x2="7" y2="4" stroke="#00d4aa" strokeWidth="1.4" />
+              <line x1="7" y1="10" x2="7" y2="14" stroke="#00d4aa" strokeWidth="1.4" />
+              <line x1="0" y1="7" x2="4" y2="7" stroke="#00d4aa" strokeWidth="1.4" />
+              <line x1="10" y1="7" x2="14" y2="7" stroke="#00d4aa" strokeWidth="1.4" />
+              <circle cx="7" cy="7" r="1.2" fill="#00d4aa" />
+            </svg>
 
-      {/* Map Controls Legend */}
-      <div className="absolute top-4 right-4 bg-background/90 backdrop-blur-sm border border-border rounded-md px-3 py-2 text-xs">
-        <div className="flex items-center gap-2 mb-1">
-          <div className="w-3 h-3 rounded-full bg-destructive animate-pulse"></div>
-          <span>Parcel Beacon</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-survey-primary"></div>
-          <span>Plot Corner</span>
+            {showDMS ? (
+              <span>
+                {fmtDMS(hoveredCoord.lat, true)}&nbsp;&nbsp;
+                {fmtDMS(hoveredCoord.lng, false)}
+              </span>
+            ) : (
+              <span>
+                <span style={{ color: '#00d4aa' }}>LAT</span>{' '}
+                <span style={{ color: '#f1f5f9', fontWeight: 600 }}>
+                  {hoveredCoord.lat.toFixed(6)}
+                </span>
+                <span style={{ color: '#475569', margin: '0 6px' }}>|</span>
+                <span style={{ color: '#00d4aa' }}>LNG</span>{' '}
+                <span style={{ color: '#f1f5f9', fontWeight: 600 }}>
+                  {hoveredCoord.lng.toFixed(6)}
+                </span>
+              </span>
+            )}
+
+            <span
+              style={{
+                fontSize: 9,
+                color: '#64748b',
+                borderLeft: '1px solid #334155',
+                paddingLeft: 6,
+              }}
+            >
+              {showDMS ? 'DEC' : 'DMS'}
+            </span>
+          </button>
+        ) : (
+          <div
+            style={{
+              background: 'rgba(10,15,26,0.72)',
+              backdropFilter: 'blur(4px)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 8,
+              padding: '5px 10px',
+              color: '#475569',
+              fontFamily: 'monospace',
+              fontSize: 11,
+            }}
+          >
+            Hover map for coordinates
+          </div>
+        )}
+      </div>
+
+      {/* ── Legend ────────────────────────────────────────────────────────── */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 10,
+          right: 10,
+          zIndex: 1000,
+          background: 'rgba(10,15,26,0.88)',
+          backdropFilter: 'blur(6px)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 10,
+          padding: '8px 12px',
+          color: '#e2e8f0',
+          fontSize: 11,
+          boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#ef4444', border: '2px solid #0a0f1a', boxShadow: '0 0 6px rgba(239,68,68,0.5)' }} />
+            <span>Parcel Beacon</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#00d4aa', border: '1.5px solid #0a0f1a' }} />
+            <span>Plot Corner</span>
+          </div>
         </div>
       </div>
     </div>
