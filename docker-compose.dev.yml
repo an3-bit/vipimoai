@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  postgis:
+    image: postgis/postgis:15-3.4
+    environment:
+      POSTGRES_DB: vipimoai
+      POSTGRES_USER: vipimoai
+      POSTGRES_PASSWORD: vipimoai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  web:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.dev
+    command: sh -c "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - ./server:/app
+      - media:/app/media
+    environment:
+      - DEBUG=True
+      - DJANGO_SETTINGS_MODULE=vipimoai_backend.settings
+      - DB_ENGINE=postgis
+      - DATABASE_URL=postgres://vipimoai:vipimoai@postgis:5432/vipimoai
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MEDIA_ROOT=/app/media
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgis
+      - redis
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.dev
+    command: sh -c "celery -A vipimoai_backend.worker worker --loglevel=info"
+    volumes:
+      - ./server:/app
+      - media:/app/media
+    environment:
+      - DJANGO_SETTINGS_MODULE=vipimoai_backend.settings
+      - DB_ENGINE=postgis
+      - DATABASE_URL=postgres://vipimoai:vipimoai@postgis:5432/vipimoai
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MEDIA_ROOT=/app/media
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    depends_on:
+      - postgis
+      - redis
+
+volumes:
+  pgdata:
+  media:

@@ -51,6 +51,10 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
   // Parcel data
   const [parcelCoordinates, setParcelCoordinates] = useState<Coordinate[]>([]);
   
+  // Authoritative area from backend (STEP 2 - replaces local math)
+  const [totalAreaHaFromBackend, setTotalAreaHaFromBackend] = useState<number | null>(null);
+  const [ingestingCoordinates, setIngestingCoordinates] = useState(false);
+  
   // Load parcel coordinates from project
   useEffect(() => {
     if (project?.parcels && project.parcels.length > 0) {
@@ -101,19 +105,47 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
   const [showTimeline, setShowTimeline] = useState(false);
   
   // Computed values
-  const totalAreaHa = parcelCoordinates.length > 2
-    ? (() => {
-        let area = 0;
-        for (let i = 0; i < parcelCoordinates.length; i++) {
-          const j = (i + 1) % parcelCoordinates.length;
-          area += parcelCoordinates[i].lng * parcelCoordinates[j].lat;
-          area -= parcelCoordinates[j].lng * parcelCoordinates[i].lat;
-        }
-        area = Math.abs(area) / 2;
-        return area * 111000 * 111000 * Math.cos(parcelCoordinates[0].lat * Math.PI / 180) / 10000;
-      })()
-    : 0;
+  // Use backend area if available, otherwise fall back to local calculation
+  const totalAreaHa = totalAreaHaFromBackend !== null
+    ? totalAreaHaFromBackend
+    : parcelCoordinates.length > 2
+      ? (() => {
+          let area = 0;
+          for (let i = 0; i < parcelCoordinates.length; i++) {
+            const j = (i + 1) % parcelCoordinates.length;
+            area += parcelCoordinates[i].lng * parcelCoordinates[j].lat;
+            area -= parcelCoordinates[j].lng * parcelCoordinates[i].lat;
+          }
+          area = Math.abs(area) / 2;
+          return area * 111000 * 111000 * Math.cos(parcelCoordinates[0].lat * Math.PI / 180) / 10000;
+        })()
+      : 0;
   const totalAreaAcres = totalAreaHa * 2.471;
+  
+  // Coordinate ingestion function (STEP 2 - call backend for authoritative area)
+  const handleIngestCoordinates = async (coordinates: Coordinate[]) => {
+    if (coordinates.length < 3) return;
+    
+    try {
+      setIngestingCoordinates(true);
+      const { ingestCoordinates } = await import('@/lib/apiClient');
+      const response = await ingestCoordinates({
+        coordinates: coordinates.map(c => ({ lat: c.lat, lng: c.lng })),
+      });
+      
+      if (response.success) {
+        setTotalAreaHaFromBackend(response.data.area.hectares);
+        toast.success(`Area calculated: ${response.data.area.hectares.toFixed(4)} ha`);
+        return response.data.area.hectares;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to ingest coordinates';
+      toast.error(message);
+      console.error('Coordinate ingestion error:', error);
+    } finally {
+      setIngestingCoordinates(false);
+    }
+  };
   
   // Zoom to fit ref
   const zoomToFitRef = useRef<ZoomToFitRef>(null);
@@ -161,6 +193,8 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
     setShowTour,
     setHasSeenTour,
     setShowTimeline,
+    setTotalAreaHaFromBackend,
+    setIngestingCoordinates,
     
     // State values
     mapLayer,
@@ -202,10 +236,15 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
     showTour,
     hasSeenTour,
     showTimeline,
+    totalAreaHaFromBackend,
+    ingestingCoordinates,
     
     // Computed
     totalAreaHa,
     totalAreaAcres,
+    
+    // STEP 2: Coordinate ingestion function
+    handleIngestCoordinates,
     
     // Hooks
     riparian,

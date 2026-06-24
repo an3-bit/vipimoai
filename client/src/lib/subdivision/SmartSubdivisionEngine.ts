@@ -1,4 +1,23 @@
 /**
+ * ⚠️ DEPRECATED - SmartSubdivisionEngine (LEGACY - Step 1)
+ * 
+ * This file contains local client-side subdivision logic and is NOW DEPRECATED.
+ * 
+ * REPLACEMENT: All subdivision logic has been moved to the Django backend.
+ * 
+ * STEP 2 MIGRATION:
+ * - Frontend now calls POST /api/subdivide/ for all subdivision operations
+ * - Coordinate area calculation is done by POST /api/rtk/ingest-coordinates/
+ * - Multi-target area support is now handled server-side
+ * - This file is kept for reference only and should not be imported in new code
+ * 
+ * SEE ALSO:
+ * - client/src/lib/apiClient.ts -> ingestCoordinates(), djangoSubdivide()
+ * - client/src/hooks/useSurvey.ts -> useAISubdivision()
+ * - client/src/components/subdivision/SubdivisionForm.tsx (Updated for STEP 2)
+ */
+
+/**
  * SmartSubdivisionEngine - The Orchestrator
  * Combines FrontageAnalyzer and LayoutGenerator into a complete
  * context-aware subdivision system

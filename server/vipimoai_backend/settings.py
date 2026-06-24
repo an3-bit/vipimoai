@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -33,9 +34,15 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+    'channels',
     
     # Custom apps
     'core',
+    # New apps for cadastral vision pipeline (scaffolding)
+    'rtk_core',
+    'vision',
+    'spatial_db',
+    'brain',
 ]
 
 MIDDLEWARE = [
@@ -68,10 +75,45 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'vipimoai_backend.wsgi.application'
+ASGI_APPLICATION = 'vipimoai_backend.asgi.application'
 
-DB_ENGINE = os.getenv('DB_ENGINE', 'sqlite')
+DATABASE_URL = os.getenv('DATABASE_URL')
+DB_ENGINE = os.getenv('DB_ENGINE', 'sqlite').lower()
 
-if DB_ENGINE == 'mysql':
+if DATABASE_URL:
+    parsed_db_url = urlparse(DATABASE_URL)
+    if parsed_db_url.scheme in ('postgres', 'postgresql'):
+        DB_ENGINE = 'postgis'
+    elif parsed_db_url.scheme == 'mysql':
+        DB_ENGINE = 'mysql'
+    elif parsed_db_url.scheme == 'sqlite':
+        DB_ENGINE = 'sqlite'
+
+if DB_ENGINE in ('postgres', 'postgresql', 'postgis'):
+    engine = 'django.contrib.gis.db.backends.postgis'
+    if DATABASE_URL:
+        DATABASES = {
+            'default': {
+                'ENGINE': engine,
+                'NAME': parsed_db_url.path.lstrip('/'),
+                'USER': parsed_db_url.username or os.getenv('DB_USER', 'postgres'),
+                'PASSWORD': parsed_db_url.password or os.getenv('DB_PASSWORD', ''),
+                'HOST': parsed_db_url.hostname or os.getenv('DB_HOST', '127.0.0.1'),
+                'PORT': str(parsed_db_url.port or os.getenv('DB_PORT', '5432')),
+            }
+        }
+    else:
+        DATABASES = {
+            'default': {
+                'ENGINE': engine,
+                'NAME': os.getenv('DB_NAME', 'vipimoai'),
+                'USER': os.getenv('DB_USER', 'postgres'),
+                'PASSWORD': os.getenv('DB_PASSWORD', 'password'),
+                'HOST': os.getenv('DB_HOST', '127.0.0.1'),
+                'PORT': os.getenv('DB_PORT', '5432'),
+            }
+        }
+elif DB_ENGINE == 'mysql':
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
@@ -93,6 +135,31 @@ else:
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
+
+if DB_ENGINE in ('postgis', 'postgres', 'postgresql'):
+    INSTALLED_APPS.insert(4, 'django.contrib.gis')
+
+# Media settings for storing RIM rasters locally
+MEDIA_ROOT = os.getenv('MEDIA_ROOT', str(BASE_DIR / 'media'))
+MEDIA_URL = '/media/'
+
+# Celery config (Redis)
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+
+# Channels / WebSocket configuration (uses Redis channel layer)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [os.getenv('CHANNELS_REDIS_URL', os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'))],
+        },
+    },
+}
+
+# OpenRouter / OpenAI settings (Vision LLM)
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+OPENROUTER_API_BASE = os.getenv('OPENROUTER_API_BASE', 'https://openrouter.ai')
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators

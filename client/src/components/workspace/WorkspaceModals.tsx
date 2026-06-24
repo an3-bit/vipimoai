@@ -1,4 +1,9 @@
-import { MutationFormModal, ProjectCompletionModal, PlotStatusCard } from '@/components/workspace';
+import {
+  MutationFormModal,
+  ProjectCompletionModal,
+  PlotStatusCard,
+} from "@/components/workspace";
+import { RIMUploadModal } from "@/components/workspace";
 
 interface WorkspaceModalsProps {
   projectId: string;
@@ -19,6 +24,9 @@ interface WorkspaceModalsProps {
   onSelectedPlotChange: (plot: any | null) => void;
   onPlotStatusChange: (newStatus: string) => void;
   isUpdatingPlot: boolean;
+  rimUploadOpen?: boolean;
+  onRimUploadOpenChange?: (open: boolean) => void;
+  projectCenter?: { lat: number; lng: number } | null;
 }
 
 export function WorkspaceModals({
@@ -40,6 +48,9 @@ export function WorkspaceModals({
   onSelectedPlotChange,
   onPlotStatusChange,
   isUpdatingPlot,
+  rimUploadOpen = false,
+  onRimUploadOpenChange = () => {},
+  projectCenter = null,
 }: WorkspaceModalsProps) {
   return (
     <>
@@ -73,9 +84,17 @@ export function WorkspaceModals({
         onOpenChange={(open) => !open && onSelectedPlotChange(null)}
         plotNumber={selectedPlot?.plot_number || 0}
         areaSqm={selectedPlot?.area_sqm || 0}
-        currentStatus={selectedPlot?.status || 'available'}
+        currentStatus={selectedPlot?.status || "available"}
         isUpdating={isUpdatingPlot}
         onStatusChange={onPlotStatusChange}
+      />
+
+      {/* RIM Upload Modal */}
+      <RIMUploadModal
+        open={rimUploadOpen || false}
+        onOpenChange={onRimUploadOpenChange}
+        projectId={projectId}
+        center={projectCenter}
       />
     </>
   );

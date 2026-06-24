@@ -7,6 +7,8 @@ import sys
 def main():
     """Run administrative tasks."""
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'vipimoai_backend.settings')
+    # Ensure celery worker discovery when running inside containers
+    os.environ.setdefault('CELERY_BROKER_URL', os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0'))
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
