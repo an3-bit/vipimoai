@@ -16,3 +16,4 @@ Pillow>=10.0.0
 shapely>=2.1.1
 channels>=4.0.0
 channels-redis>=4.0.0
+daphne>=4.0.0

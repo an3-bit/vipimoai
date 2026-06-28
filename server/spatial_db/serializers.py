@@ -1,6 +1,10 @@
 import json
 
-from django.contrib.gis.geos import GEOSException
+try:
+    from django.contrib.gis.geos import GEOSException
+except Exception:
+    GEOSException = Exception
+
 from rest_framework import serializers
 
 from .models import RIMRaster, RIMExtractedFeature, TruthOverride

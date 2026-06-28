@@ -1,5 +1,13 @@
 import json
-from django.contrib.gis.geos import GEOSGeometry, Polygon, GEOSException
+
+try:
+    from django.contrib.gis.geos import GEOSGeometry, Polygon, GEOSException
+    _GEOS_AVAILABLE = True
+except Exception:
+    GEOSGeometry = None
+    Polygon = None
+    GEOSException = Exception
+    _GEOS_AVAILABLE = False
 
 
 def bbox_to_polygon(bbox):
@@ -19,6 +27,8 @@ def bbox_to_polygon(bbox):
     except (TypeError, ValueError):
         return None
 
+    if not _GEOS_AVAILABLE:
+        return None
     polygon = Polygon(
         (
             (minx, miny),
@@ -44,6 +54,8 @@ def parse_geometry(value):
             return None
 
     if isinstance(value, dict) and 'type' in value:
+        if not _GEOS_AVAILABLE:
+            return None
         try:
             geom = GEOSGeometry(json.dumps(value))
             geom.srid = 21037
@@ -52,6 +64,8 @@ def parse_geometry(value):
             return None
 
     if isinstance(value, (list, tuple)) and len(value) == 4:
+        if not _GEOS_AVAILABLE:
+            return None
         try:
             x, y, w, h = [float(v) for v in value]
         except (TypeError, ValueError):

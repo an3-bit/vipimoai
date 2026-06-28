@@ -41,8 +41,9 @@ INSTALLED_APPS = [
     # New apps for cadastral vision pipeline (scaffolding)
     'rtk_core',
     'vision',
-    'spatial_db',
     'brain',
+    'spatial_db',   # GeoDjango fields fall back to JSONField when GDAL not installed
+    'vision_ai',
 ]
 
 MIDDLEWARE = [
@@ -136,8 +137,15 @@ else:
         }
     }
 
-if DB_ENGINE in ('postgis', 'postgres', 'postgresql'):
-    INSTALLED_APPS.insert(4, 'django.contrib.gis')
+# Load GeoDjango + spatial_db only when GDAL is available (PostGIS setups)
+try:
+    from django.contrib.gis import geos as _geos_check  # noqa: F401 - GDAL availability probe
+    if DB_ENGINE in ('postgis', 'postgres', 'postgresql'):
+        INSTALLED_APPS.insert(4, 'django.contrib.gis')
+        INSTALLED_APPS.append('spatial_db')
+except Exception:
+    # GDAL not installed – skip GeoDjango apps (fine for SQLite local dev)
+    pass
 
 # Media settings for storing RIM rasters locally
 MEDIA_ROOT = os.getenv('MEDIA_ROOT', str(BASE_DIR / 'media'))
