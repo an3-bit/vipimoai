@@ -212,6 +212,47 @@ export async function djangoSubdivide(payload: SubdivideRequest): Promise<Subdiv
   return apiFetch<SubdivideResponse>('/subdivide/', { method: 'POST', body: payload });
 }
 
+// ─── Coordinate Ingestion (NEW) ──────────────────────────────────────────────
+
+export interface IngestCoordinatesRequest {
+  coordinates: { lat: number; lng: number }[];
+  crs_input?: string;
+  crs_output?: string;
+}
+
+export interface ProjectedCoordinate {
+  easting: number;
+  northing: number;
+}
+
+export interface IngestCoordinatesResponse {
+  success: boolean;
+  data: {
+    wgs84_coordinates: { lat: number; lng: number }[];
+    projected_coordinates: ProjectedCoordinate[];
+    area: {
+      square_meters: number;
+      hectares: number;
+      acres: number;
+    };
+    crs_input: string;
+    crs_output: string;
+  };
+}
+
+/**
+ * Ingest WGS84 coordinates and get authoritative area calculation.
+ * 
+ * The backend will:
+ * 1. Accept WGS84 coordinates
+ * 2. Project to Arc 1960 (SRID 21037)
+ * 3. Calculate exact planar area
+ * 4. Return both coordinate formats + area in multiple units
+ */
+export async function ingestCoordinates(payload: IngestCoordinatesRequest): Promise<IngestCoordinatesResponse> {
+  return apiFetch<IngestCoordinatesResponse>('/rtk/ingest-coordinates/', { method: 'POST', body: payload });
+}
+
 // ─── Projects ─────────────────────────────────────────────────────────────────
 
 export interface DjangoProject {
@@ -259,4 +300,45 @@ export async function djangoBulkCreatePlots(projectId: string, plots: DjangoPlot
 
 export async function djangoBulkDeletePlots(projectId: string) {
   return apiFetch(`/plots/bulk-delete/?project_id=${projectId}`, { method: 'DELETE' });
+}
+
+// ─── RIM / Vision endpoints ─────────────────────────────────────────────────
+
+export async function djangoCreateRIM(payload: { name?: string; project_id?: string; crs?: string; bbox?: any; metadata?: any }) {
+  return apiFetch('/rims/', { method: 'POST', body: payload });
+}
+
+export async function djangoUploadRIM(rimId: number, file: File, tie_points?: any) {
+  const token = getAccessToken();
+  if (!token) throw new Error('Not authenticated');
+
+  const form = new FormData();
+  form.append('file', file);
+  if (tie_points) form.append('tie_points', JSON.stringify(tie_points));
+
+  const res = await fetch(`${API_BASE}/rims/${rimId}/upload/`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: form,
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Upload failed: ${res.status} ${txt}`);
+  }
+
+  return res.json();
+}
+
+export async function djangoIngestVision(payload: { rim_id?: number; image_path?: string; polygon?: any; crs?: string; options?: any }) {
+  return apiFetch('/ingest/', { method: 'POST', body: payload });
+}
+
+export function taskWebSocketUrl(taskId: string) {
+  // Derive ws URL from API_BASE: e.g. http://host:8000/api -> ws://host:8000/ws/tasks/<id>/
+  const apiUrl = API_BASE.replace(/\/api\/?$/, '');
+  const wsProto = apiUrl.startsWith('https') ? 'wss' : 'ws';
+  return `${wsProto}://${apiUrl.replace(/^https?:\/\//, '')}/ws/tasks/${taskId}/`;
 }

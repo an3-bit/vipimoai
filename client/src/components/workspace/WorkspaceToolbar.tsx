@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import {
   Upload,
+  Camera,
   Waves,
   Route,
   AlertTriangle,
@@ -22,6 +23,7 @@ interface WorkspaceToolbarProps {
   onAccessRoadModeChange: (mode: boolean) => void;
   frontageEdgeSelectorEnabled: boolean;
   onFrontageEdgeSelectorChange: (enabled: boolean) => void;
+  onOpenRIMUpload?: () => void; // Add it here to the Interface
   accessEdgesCount: number;
   isProcessing: boolean;
   onRunHazardScan: () => void;
@@ -46,6 +48,7 @@ export function WorkspaceToolbar({
   onAccessRoadModeChange,
   frontageEdgeSelectorEnabled,
   onFrontageEdgeSelectorChange,
+  onOpenRIMUpload, // Extract it cleanly here
   accessEdgesCount,
   isProcessing,
   onRunHazardScan,
@@ -72,6 +75,15 @@ export function WorkspaceToolbar({
           <Upload className="h-5 w-5" />
         </button>
 
+        {/* RIM Photo Upload (Fixed placement) */}
+        <button 
+          className="tool-btn" 
+          title="Upload RIM Photo" 
+          onClick={() => onOpenRIMUpload?.()}
+        >
+          <Camera className="h-5 w-5" />
+        </button>
+
         {/* Draw River */}
         <button
           className={`tool-btn ${isDrawingRiver ? 'active' : ''}`}
@@ -81,7 +93,7 @@ export function WorkspaceToolbar({
           <Waves className="h-5 w-5" />
         </button>
 
-        {/* Access Road Selector */}
+        {/* Access Road Selector (Fixed malformed button tags) */}
         <button
           className={`tool-btn ${accessRoadMode ? 'active' : ''} ${accessEdgesCount > 0 ? 'text-emerald-500' : ''}`}
           onClick={() => onAccessRoadModeChange(!accessRoadMode)}

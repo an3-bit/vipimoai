@@ -5,48 +5,75 @@ This is the backend server for VipimoAI, built with Django, Django REST Framewor
 ## Prerequisites
 
 - Python 3.10+
-- MySQL Server running locally or remotely
+- Docker / Docker Compose for local PostGIS + Redis development
+- Optional: local MySQL if you want to run the legacy MySQL backend path
 
 ## Setup Instructions
 
-1. **Database Configuration**:
-   - Create a MySQL database named `vipimoai` (or adjust the name in `.env`).
-     ```sql
-     CREATE DATABASE vipimoai CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-     ```
+### 1. Local development with PostGIS (recommended)
 
-2. **Configure Environment Variables**:
-   - Open the `.env` file in the root of the server folder and configure your database credentials:
-     ```env
-     DEBUG=True
-     SECRET_KEY=django-insecure-vipimoai-backend-secret-key-2026
-     DB_NAME=vipimoai
-     DB_USER=root
-     DB_PASSWORD=your_mysql_password
-     DB_HOST=127.0.0.1
-     DB_PORT=3306
-     LOVABLE_API_KEY=your_optional_lovable_api_key
-     ```
+1. Copy `.env.example` to `.env` and fill values.
+2. Ensure `DB_ENGINE=postgis` and `DATABASE_URL` points to the PostGIS service:
+   ```env
+   DEBUG=True
+   SECRET_KEY=django-insecure-vipimoai-backend-secret-key-2026
+   DB_ENGINE=postgis
+   DATABASE_URL=postgres://vipimoai:vipimoai@postgis:5432/vipimoai
+   CELERY_BROKER_URL=redis://redis:6379/0
+   CELERY_RESULT_BACKEND=redis://redis:6379/0
+   MEDIA_ROOT=/app/media
+   OPENROUTER_API_KEY=your_openrouter_api_key
+   ```
+3. Start the development stack:
+   ```bash
+   docker-compose -f ../docker-compose.dev.yml up --build
+   ```
+4. The API will be available at `http://127.0.0.1:8000/`.
 
-3. **Install Dependencies**:
-   - The virtual environment `venv` is already created. You can activate it and install the requirements if running on a new machine:
-     ```bash
-     venv\Scripts\activate
-     pip install -r requirements.txt
-     ```
+### 2. Alternative local SQLite development
 
-4. **Run Database Migrations**:
-   - Execute the following command to create all tables in MySQL:
-     ```bash
-     python manage.py migrate
-     ```
+If you do not need PostGIS for a given test run, use the default SQLite configuration by leaving `DB_ENGINE` unset or set to `sqlite`.
 
-5. **Run the Development Server**:
-   - Start the development server:
-     ```bash
-     python manage.py runserver
-     ```
-   - The API will be available at `http://127.0.0.1:8000/`.
+### 3. Install Python dependencies
+
+If you are running outside Docker, install packages in the `server` folder:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 4. Run database migrations
+
+For any supported backend, run:
+```bash
+python manage.py migrate
+```
+
+### 5. Run the development server
+
+Start Django locally:
+```bash
+python manage.py runserver
+```
+
+The API is available at `http://127.0.0.1:8000/`.
+
+## Notes
+
+- The code now supports `sqlite`, `mysql`, and `postgis` backends.
+- When `DB_ENGINE` is set to `postgis`, the project uses `django.contrib.gis` and the PostGIS backend.
+- The current Docker compose file already brings up `postgis`, `redis`, `web`, and `worker` services.
+
+## PostGIS Migration Plan
+
+This project currently persists raster metadata and extracted geometry as JSON fields.
+A dedicated GeoDjango migration is planned to switch the key spatial models to real
+PostGIS geometry columns while keeping JSON payloads for compatibility during the
+transition.
+
+See `server/spatial_db/MIGRATION_PLAN.md` for the full step-by-step plan.
 
 ## API Endpoints
 

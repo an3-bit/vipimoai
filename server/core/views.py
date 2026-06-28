@@ -335,6 +335,8 @@ class AISubdivisionView(APIView):
                 'orientation_degrees': orientation_degrees,
                 'target_plot_count': target_plot_count,
                 'crs_name': crs_name,
+                'frontage_edges': frontage_edges,
+                'target_areas': data.get('target_areas', []),
             },
             'results': {
                 'total_plots': len(plots),

@@ -10,6 +10,7 @@ export { WorkspaceChat } from './WorkspaceChat';
 export { WorkspaceMapControls } from './WorkspaceMapControls';
 export { WorkspaceMapContainer } from './WorkspaceMapContainer';
 export { WorkspaceModals } from './WorkspaceModals';
+export { RIMUploadModal } from './RIMUploadModal';
 export { UpdateParcelDialog } from './UpdateParcelDialog';
 export { FrontageEdgeSelector } from './FrontageEdgeSelector';
 export { CoPilotLoadingOverlay } from '../map/CoPilotLoadingOverlay';
