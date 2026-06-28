@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { MapContainer, TileLayer, Polygon, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -19,13 +19,15 @@ const TILE_LAYERS = {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
+    maxZoom: 22,
+    maxNativeZoom: 19,
   },
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution:
       '&copy; <a href="https://www.esri.com/">Esri</a>, Maxar, GeoEye, Earthstar Geographics',
-    maxZoom: 19,
+    maxZoom: 22,
+    maxNativeZoom: 17,
   },
 };
 
@@ -152,6 +154,7 @@ export function SurveyMap({
       <MapContainer
         center={defaultCenter}
         zoom={15}
+        maxZoom={22}
         className="h-full w-full min-h-[400px]"
         style={{ background: '#0a0f1a' }}
       >
@@ -160,6 +163,7 @@ export function SurveyMap({
           url={tile.url}
           attribution={tile.attribution}
           maxZoom={tile.maxZoom}
+          maxNativeZoom={tile.maxNativeZoom}
         />
 
         {/* Fit to parcel on load */}

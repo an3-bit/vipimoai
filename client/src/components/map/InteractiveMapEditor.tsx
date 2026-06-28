@@ -164,6 +164,7 @@ export function InteractiveMapEditor({
       <MapContainer
         center={defaultCenter}
         zoom={15}
+        maxZoom={22}
         className="h-full w-full min-h-[400px]"
         style={{ background: '#0a0f1a' }}
       >
@@ -171,11 +172,15 @@ export function InteractiveMapEditor({
           <TileLayer
             attribution='&copy; <a href="https://www.esri.com/">Esri</a>'
             url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxZoom={22}
+            maxNativeZoom={17}
           />
         ) : (
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            maxZoom={22}
+            maxNativeZoom={19}
           />
         )}
 

@@ -119,6 +119,7 @@ export function MapView({ projects, mapLayer }: MapViewProps) {
     <MapContainer
       center={[-1.2, 37.0]}
       zoom={10}
+      maxZoom={22}
       style={{ height: '100%', width: '100%' }}
       zoomControl={false}
     >
@@ -128,6 +129,8 @@ export function MapView({ projects, mapLayer }: MapViewProps) {
           ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
           : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
         }
+        maxZoom={22}
+        maxNativeZoom={mapLayer === 'satellite' ? 17 : 19}
       />
       <MapBoundsAdjuster projects={projects} />
       

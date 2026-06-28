@@ -17,22 +17,24 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
-// ─── Tile layer config ────────────────────────────────────────────────────────
 const TILE_LAYERS = {
   standard: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
+    maxZoom: 22,
+    maxNativeZoom: 19,
   },
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: '&copy; <a href="https://www.esri.com/">Esri</a>, Maxar, GeoEye, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN',
-    maxZoom: 19,
+    maxZoom: 22,
+    maxNativeZoom: 17,
   },
   topo: {
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a> contributors',
-    maxZoom: 17,
+    maxZoom: 22,
+    maxNativeZoom: 17,
   },
 };
 
@@ -180,6 +182,7 @@ export function WorkspaceMapContainer({
       <MapContainer
         center={defaultCenter}
         zoom={15}
+        maxZoom={22}
         style={{ height: '100%', width: '100%' }}
         zoomControl={false}
       >
@@ -189,6 +192,7 @@ export function WorkspaceMapContainer({
           url={tile.url}
           attribution={tile.attribution}
           maxZoom={tile.maxZoom}
+          maxNativeZoom={tile.maxNativeZoom}
         />
 
         {/* ── Cursor tracker ─────────────────────────────────────────────── */}
@@ -559,7 +563,7 @@ export function WorkspaceMapContainer({
         <div
           style={{
             position: 'absolute',
-            top: 12,
+            bottom: 28,
             right: 12,
             zIndex: 1000,
             background: 'rgba(10,15,26,0.88)',
