@@ -31,13 +31,14 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
   const riparian = useRiparianBuffer(30);
   
   // Map state
-  const [mapLayer, setMapLayer] = useState<'standard' | 'satellite' | 'topo'>('standard');
+  const [mapLayer, setMapLayer] = useState<'standard' | 'satellite' | 'topo'>('satellite');
   
   // Feature toggles
   const [showHazardZone, setShowHazardZone] = useState(false);
   const [showPlotGrid, setShowPlotGrid] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
   
   // Form state
   const [plotSize, setPlotSize] = useState('50x100ft');
@@ -238,6 +239,8 @@ export function useWorkspaceState({ projectId }: UseWorkspaceStateProps) {
     showTimeline,
     totalAreaHaFromBackend,
     ingestingCoordinates,
+    showLabels,
+    setShowLabels,
     
     // Computed
     totalAreaHa,

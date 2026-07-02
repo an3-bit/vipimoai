@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { MapContainer, TileLayer, Polygon, Popup, Polyline, Marker, useMapEvents } from 'react-leaflet';
+import React, { useState, useCallback } from 'react';
+import { MapContainer, TileLayer, Polygon, Popup, Polyline, Marker, useMapEvents, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ZoomToFitControl, ZoomToFitRef } from '@/components/map/ZoomToFitControl';
@@ -8,6 +8,8 @@ import { AccessRoadSelector, AccessEdge } from '@/components/map/AccessRoadSelec
 import { FrontageEdgeSelector } from '@/components/workspace/FrontageEdgeSelector';
 import { Coordinate } from '@/types/survey';
 import { PlotStatus } from '@/components/workspace/PlotStatusCard';
+import { getEdgeLabelDetails, formatArea } from '@/lib/geometry';
+
 
 // Fix Leaflet default icon paths for Vite/webpack
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -105,6 +107,60 @@ function fmtDeg(val: number, isLat: boolean): string {
   return `${deg}°${min}'${sec}"${dir}`;
 }
 
+// Simple glowing beacon dot icon
+const createBeaconDotIcon = () =>
+  new L.DivIcon({
+    className: '',
+    html: `
+      <div style="
+        width:10px;
+        height:10px;
+        background:#00d4aa;
+        border:2px solid #0a0f1a;
+        border-radius:50%;
+        box-shadow:0 0 8px #00d4aa, 0 0 2px #000;
+      "></div>
+    `,
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  });
+
+// Edge labels rendering helper component
+interface PolygonEdgeLabelsProps {
+  coordinates: Coordinate[];
+}
+
+function PolygonEdgeLabels({ coordinates }: PolygonEdgeLabelsProps) {
+  if (!coordinates || coordinates.length < 2) return null;
+
+  return (
+    <>
+      {coordinates.map((coord, idx) => {
+        const nextCoord = coordinates[(idx + 1) % coordinates.length];
+        const details = getEdgeLabelDetails(coord, nextCoord);
+
+        // Don't render labels for tiny lines (e.g. less than 1m)
+        if (details.distance < 1.0) return null;
+
+        const labelIcon = new L.DivIcon({
+          className: '',
+          html: `<div class="edge-length-label" style="transform: translate(-50%, -50%) rotate(${details.angle}deg);">${details.distance.toFixed(2)}m</div>`,
+          iconSize: [0, 0],
+        });
+
+        return (
+          <Marker
+            key={`edge-${idx}-${coord.lat}-${coord.lng}`}
+            position={[details.midpoint.lat, details.midpoint.lng]}
+            icon={labelIcon}
+            interactive={false}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface WorkspaceMapContainerProps {
   mapLayer: 'standard' | 'satellite' | 'topo';
@@ -124,6 +180,7 @@ interface WorkspaceMapContainerProps {
   onDrawingComplete: () => void;
   onAccessEdgeToggle: (edgeIndex: number, roadWidth?: number, bearing?: number, length?: number) => void;
   onPlotSelect: (plot: any) => void;
+  showLabels: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -145,6 +202,7 @@ export function WorkspaceMapContainer({
   onDrawingComplete,
   onAccessEdgeToggle,
   onPlotSelect,
+  showLabels,
 }: WorkspaceMapContainerProps) {
   const [cursorLat, setCursorLat] = useState<number | null>(null);
   const [cursorLng, setCursorLng] = useState<number | null>(null);
@@ -183,7 +241,7 @@ export function WorkspaceMapContainer({
         center={defaultCenter}
         zoom={15}
         maxZoom={22}
-        style={{ height: '100%', width: '100%' }}
+        style={{ height: '100%', width: '100%', background: '#0a0f1a' }}
         zoomControl={false}
       >
         {/* ── Tile Layer ─────────────────────────────────────────────────── */}
@@ -232,16 +290,31 @@ export function WorkspaceMapContainer({
           </Polygon>
         )}
 
+        {/* ── Parent Parcel Edge Dimensions ─────────────────────────────── */}
+        {showLabels && parcelCoordinates.length > 1 && (
+          <PolygonEdgeLabels coordinates={parcelCoordinates} />
+        )}
+
         {/* ── Parcel Corner Beacon Markers ───────────────────────────────── */}
         {parcelCoordinates.map((coord, idx) => (
           <Marker
             key={`beacon-${idx}`}
             position={[coord.lat, coord.lng]}
-            icon={createVertexIcon(String(idx + 1))}
+            icon={createBeaconDotIcon()}
           >
+            {showLabels && (
+              <Tooltip
+                permanent
+                direction="top"
+                offset={[0, -6]}
+                className="beacon-corner-label"
+              >
+                P{idx + 1}
+              </Tooltip>
+            )}
             <Popup>
               <div className="font-mono text-xs min-w-[200px]">
-                <p className="font-bold text-emerald-700 mb-1">📍 Beacon {idx + 1}</p>
+                <p className="font-bold text-emerald-700 mb-1">📍 Beacon P{idx + 1}</p>
                 <div className="space-y-0.5">
                   <p>
                     <span className="text-muted-foreground">Lat: </span>
@@ -259,6 +332,8 @@ export function WorkspaceMapContainer({
             </Popup>
           </Marker>
         ))}
+
+
 
         {/* ── Access Road Selector ───────────────────────────────────────── */}
         {parcelCoordinates.length > 0 && (
@@ -324,32 +399,35 @@ export function WorkspaceMapContainer({
             const coords = plot.coordinates as { lat: number; lng: number }[];
 
             return (
-              <Polygon
-                key={plot.id}
-                positions={coords.map((c) => [c.lat, c.lng] as [number, number])}
-                pathOptions={{ color, weight: 2, fillColor: color, fillOpacity: 0.4 }}
-                eventHandlers={{ click: () => onPlotSelect(plot) }}
-              >
-                <Popup>
-                  <div className="text-center">
-                    <p className="font-semibold">Plot {plot.plot_number}</p>
-                    <p className="text-xs text-muted-foreground">{plot.area_sqm.toFixed(0)} m²</p>
-                    <p
-                      className={`text-xs font-medium mt-1 ${
-                        status === 'sold'
-                          ? 'text-rose-500'
-                          : status === 'reserved'
-                          ? 'text-amber-500'
-                          : 'text-emerald-500'
-                      }`}
-                    >
-                      {status.charAt(0).toUpperCase() + status.slice(1)}
-                    </p>
-                  </div>
-                </Popup>
-              </Polygon>
+              <React.Fragment key={plot.id}>
+                <Polygon
+                  positions={coords.map((c) => [c.lat, c.lng] as [number, number])}
+                  pathOptions={{ color, weight: 2, fillColor: color, fillOpacity: 0.4 }}
+                  eventHandlers={{ click: () => onPlotSelect(plot) }}
+                >
+                  <Popup>
+                    <div className="text-center">
+                      <p className="font-semibold">Plot {plot.plot_number}</p>
+                      <p className="text-xs text-muted-foreground">{plot.area_sqm.toFixed(0)} m²</p>
+                      <p
+                        className={`text-xs font-medium mt-1 ${
+                          status === 'sold'
+                            ? 'text-rose-500'
+                            : status === 'reserved'
+                            ? 'text-amber-500'
+                            : 'text-emerald-500'
+                        }`}
+                      >
+                        {status.charAt(0).toUpperCase() + status.slice(1)}
+                      </p>
+                    </div>
+                  </Popup>
+                </Polygon>
+                <PolygonEdgeLabels coordinates={coords} />
+              </React.Fragment>
             );
           })}
+
 
         {/* ── Generated Plots (valid) ────────────────────────────────────── */}
         {showPlotGrid &&
@@ -360,86 +438,89 @@ export function WorkspaceMapContainer({
               const coords = plot.coordinates as any[];
 
               return (
-                <Polygon
-                  key={`generated-${index}`}
-                  positions={coords.map((c: any) => [c.lat, c.lng] as [number, number])}
-                  pathOptions={{ color, weight: 2, fillColor: color, fillOpacity: 0.5 }}
-                  eventHandlers={{ click: () => onPlotSelect(plot) }}
-                >
-                  <Popup>
-                    <div className="w-80 max-h-96 overflow-y-auto">
-                      {/* Header */}
-                      <div className="mb-3 pb-3 border-b border-border">
-                        <p className="font-bold text-base">Plot {plot.plotNumber}</p>
-                        <p
-                          className={`text-xs font-medium mt-1 px-2 py-1 rounded-full inline-block ${
-                            plot.facingRoad === 'frontage'
-                              ? 'bg-green-100 text-green-700'
+                <React.Fragment key={`generated-${index}`}>
+                  <Polygon
+                    positions={coords.map((c: any) => [c.lat, c.lng] as [number, number])}
+                    pathOptions={{ color, weight: 2, fillColor: color, fillOpacity: 0.5 }}
+                    eventHandlers={{ click: () => onPlotSelect(plot) }}
+                  >
+                    <Popup>
+                      <div className="w-80 max-h-96 overflow-y-auto">
+                        {/* Header */}
+                        <div className="mb-3 pb-3 border-b border-border">
+                          <p className="font-bold text-base">Plot {plot.plotNumber}</p>
+                          <p
+                            className={`text-xs font-medium mt-1 px-2 py-1 rounded-full inline-block ${
+                              plot.facingRoad === 'frontage'
+                                ? 'bg-green-100 text-green-700'
+                                : plot.facingRoad === 'spine'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-amber-100 text-amber-700'
+                            }`}
+                          >
+                            {plot.facingRoad === 'frontage'
+                              ? '🟢 Frontage Access'
                               : plot.facingRoad === 'spine'
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'bg-amber-100 text-amber-700'
-                          }`}
-                        >
-                          {plot.facingRoad === 'frontage'
-                            ? '🟢 Frontage Access'
-                            : plot.facingRoad === 'spine'
-                            ? '🔵 Spine Road'
-                            : '⚪ Internal Road'}
-                        </p>
-                      </div>
+                              ? '🔵 Spine Road'
+                              : '⚪ Internal Road'}
+                          </p>
+                        </div>
 
-                      {/* Area */}
-                      <div className="mb-3 pb-3 border-b border-border">
-                        <p className="text-xs font-semibold text-muted-foreground mb-1">Plot Area</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <p className="text-sm font-bold">{plot.area?.toFixed(0) ?? 'N/A'} m²</p>
-                            <p className="text-xs text-muted-foreground">
-                              {(plot.area ? plot.area / 10000 : 0).toFixed(4)} Ha
-                            </p>
+                        {/* Area */}
+                        <div className="mb-3 pb-3 border-b border-border">
+                          <p className="text-xs font-semibold text-muted-foreground mb-1">Plot Area</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <p className="text-sm font-bold">{plot.area?.toFixed(0) ?? 'N/A'} m²</p>
+                              <p className="text-xs text-muted-foreground">
+                                {(plot.area ? plot.area / 10000 : 0).toFixed(4)} Ha
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Status</p>
+                              <p className="text-xs font-medium">
+                                {plot.isPartial ? '📐 Partial' : '✓ Complete'}
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Status</p>
-                            <p className="text-xs font-medium">
-                              {plot.isPartial ? '📐 Partial' : '✓ Complete'}
-                            </p>
+                        </div>
+
+                        {/* Dimensions */}
+                        <div className="mb-3 pb-3 border-b border-border">
+                          <p className="text-xs font-semibold text-muted-foreground mb-2">Dimensions</p>
+                          <p className="text-sm font-mono">
+                            <span className="font-semibold">{plot.width?.toFixed(1)}m</span> ×{' '}
+                            <span className="font-semibold">{plot.depth?.toFixed(1)}m</span>
+                          </p>
+                        </div>
+
+                        {/* Coordinates */}
+                        <div>
+                          <p className="text-xs font-semibold text-muted-foreground mb-2">
+                            📍 Corners ({coords.length})
+                          </p>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {coords.slice(0, 6).map((coord: any, i: number) => (
+                              <p key={i} className="text-xs font-mono bg-secondary/30 p-1 rounded">
+                                <span className="text-muted-foreground">{i + 1}.</span>{' '}
+                                {coord.lat.toFixed(6)}, {coord.lng.toFixed(6)}
+                              </p>
+                            ))}
+                            {coords.length > 6 && (
+                              <p className="text-xs text-muted-foreground italic pl-1">
+                                +{coords.length - 6} more…
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
-
-                      {/* Dimensions */}
-                      <div className="mb-3 pb-3 border-b border-border">
-                        <p className="text-xs font-semibold text-muted-foreground mb-2">Dimensions</p>
-                        <p className="text-sm font-mono">
-                          <span className="font-semibold">{plot.width?.toFixed(1)}m</span> ×{' '}
-                          <span className="font-semibold">{plot.depth?.toFixed(1)}m</span>
-                        </p>
-                      </div>
-
-                      {/* Coordinates */}
-                      <div>
-                        <p className="text-xs font-semibold text-muted-foreground mb-2">
-                          📍 Corners ({coords.length})
-                        </p>
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
-                          {coords.slice(0, 6).map((coord: any, i: number) => (
-                            <p key={i} className="text-xs font-mono bg-secondary/30 p-1 rounded">
-                              <span className="text-muted-foreground">{i + 1}.</span>{' '}
-                              {coord.lat.toFixed(6)}, {coord.lng.toFixed(6)}
-                            </p>
-                          ))}
-                          {coords.length > 6 && (
-                            <p className="text-xs text-muted-foreground italic pl-1">
-                              +{coords.length - 6} more…
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </Popup>
-                </Polygon>
+                    </Popup>
+                  </Polygon>
+                  <PolygonEdgeLabels coordinates={coords} />
+                </React.Fragment>
               );
             })}
+
 
         {/* ── Invalid Plots ──────────────────────────────────────────────── */}
         {showPlotGrid &&

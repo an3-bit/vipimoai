@@ -1,4 +1,5 @@
 import { Coordinate } from '@/types/survey';
+import { utmToWGS84, getUTMZone } from '@/lib/coordinates';
 
 // Calculate distance between two coordinates using Haversine formula
 export function calculateDistance(coord1: Coordinate, coord2: Coordinate): number {
@@ -155,25 +156,42 @@ export function parseCSVCoordinates(csvText: string): Coordinate[] {
           // Determine if values are lat/lng or UTM based on magnitude
           // Lat: -90 to 90, Lng: -180 to 180
           // UTM Easting: typically 100,000 to 900,000
-          // UTM Northing: typically 0 to 10,000,000
-          
+          // UTM Northing for Kenya (Southern hemisphere): ~9,500,000 to 10,100,000
+
           if (Math.abs(val1) <= 90 && Math.abs(val2) <= 180) {
-            // Likely lat, lng
+            // Likely lat, lng (WGS84)
             lat = val1;
             lng = val2;
           } else if (Math.abs(val2) <= 90 && Math.abs(val1) <= 180) {
-            // Likely lng, lat (some systems use this order)
+            // Likely lng, lat (reversed WGS84)
             lat = val2;
             lng = val1;
           } else if (val1 > 100000 && val2 > 100000) {
-            // Likely UTM coordinates - store as-is and flag for conversion
-            // For now, we'll try to detect Kenya's UTM zone (36N/37N)
-            // This is a simplified conversion - full solution would need zone info
-            lat = val2;
-            lng = val1;
-            console.warn('Large coordinates detected - may need UTM conversion');
+            // UTM coordinates — determine which column is easting vs northing by magnitude
+            // Easting is always 100k-900k; southing hemisphere northing ~9.5M-10.5M
+            let easting: number;
+            let northing: number;
+            if (val1 >= 9000000) {
+              // col1 = northing, col2 = easting  (e.g. "9856234, 234567")
+              northing = val1;
+              easting = val2;
+            } else if (val2 >= 9000000) {
+              // col1 = easting, col2 = northing  (e.g. "234567, 9856234")
+              easting = val1;
+              northing = val2;
+            } else {
+              // Both look like eastings — assume col1=easting, col2=northing (less common)
+              easting = val1;
+              northing = val2;
+            }
+            // Detect UTM zone from easting value (Kenya zone 36 ≈ 166k-834k, zone 37 similar)
+            // Use a heuristic: if easting < 400000 check longitude guess for zone 36 vs 37
+            const zone = getUTMZone(easting < 400000 ? 33.5 : 39);
+            const converted = utmToWGS84(easting, northing, zone);
+            lat = converted.lat;
+            lng = converted.lng;
           }
-          
+
           if (lat !== null && lng !== null) {
             coordinates.push({ lat, lng });
           }
@@ -320,3 +338,36 @@ export function subdivideParcel(
 
   return plots;
 }
+
+export interface EdgeLabelDetails {
+  distance: number;
+  midpoint: Coordinate;
+  angle: number;
+}
+
+export function getEdgeLabelDetails(c1: Coordinate, c2: Coordinate): EdgeLabelDetails {
+  const dist = calculateDistance(c1, c2);
+  const mid = {
+    lat: (c1.lat + c2.lat) / 2,
+    lng: (c1.lng + c2.lng) / 2,
+  };
+
+  // Angle in degrees between c1 and c2
+  const dLng = (c2.lng - c1.lng) * Math.PI / 180;
+  const lat1 = c1.lat * Math.PI / 180;
+  const lat2 = c2.lat * Math.PI / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  let angle = Math.atan2(y, x) * 180 / Math.PI;
+
+  // Normalize angle to [-90, 90] to keep text always readable and not upside-down
+  if (angle > 90) angle -= 180;
+  if (angle < -90) angle += 180;
+
+  return {
+    distance: dist,
+    midpoint: mid,
+    angle,
+  };
+}
+

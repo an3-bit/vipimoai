@@ -1,4 +1,4 @@
-import { History, HelpCircle, Maximize2, Map, Layers, Mountain, X } from 'lucide-react';
+import { History, HelpCircle, Maximize2, Map, Layers, Mountain, X, Eye, EyeOff } from 'lucide-react';
 import { ActivityTimeline } from './ActivityTimeline';
 
 interface WorkspaceMapControlsProps {
@@ -9,6 +9,8 @@ interface WorkspaceMapControlsProps {
   onZoomToFit: () => void;
   onShowTour: () => void;
   projectId: string;
+  showLabels: boolean;
+  onShowLabelsChange: (show: boolean) => void;
 }
 
 export function WorkspaceMapControls({
@@ -19,6 +21,8 @@ export function WorkspaceMapControls({
   onZoomToFit,
   onShowTour,
   projectId,
+  showLabels,
+  onShowLabelsChange,
 }: WorkspaceMapControlsProps) {
   return (
     <>
@@ -33,6 +37,17 @@ export function WorkspaceMapControls({
           title="Activity Timeline"
         >
           <History className="h-4 w-4" />
+        </button>
+
+        {/* Toggle Labels */}
+        <button
+          onClick={() => onShowLabelsChange(!showLabels)}
+          className={`floating-control p-2 rounded transition-colors ${
+            showLabels ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
+          }`}
+          title={showLabels ? "Hide Map Labels" : "Show Map Labels"}
+        >
+          {showLabels ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
         </button>
 
         {/* Help / Tour Button */}

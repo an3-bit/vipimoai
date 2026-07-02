@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import { MapContainer, TileLayer, Polygon, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { MapContainer, TileLayer, Polygon, Marker, Popup, useMap, useMapEvents, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Coordinate, Beacon, Plot } from '@/types/survey';
-import { formatCoordinate } from '@/lib/geometry';
+import { formatCoordinate, getEdgeLabelDetails, formatArea } from '@/lib/geometry';
 
 // Fix for default marker icons in Leaflet with Vite
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -100,6 +100,41 @@ function CoordinateTracker({
   return null;
 }
 
+// Edge labels rendering helper component
+interface PolygonEdgeLabelsProps {
+  coordinates: Coordinate[];
+}
+
+function PolygonEdgeLabels({ coordinates }: PolygonEdgeLabelsProps) {
+  if (!coordinates || coordinates.length < 2) return null;
+
+  return (
+    <>
+      {coordinates.map((coord, idx) => {
+        const nextCoord = coordinates[(idx + 1) % coordinates.length];
+        const details = getEdgeLabelDetails(coord, nextCoord);
+
+        if (details.distance < 1.0) return null;
+
+        const labelIcon = new L.DivIcon({
+          className: '',
+          html: `<div class="edge-length-label" style="transform: translate(-50%, -50%) rotate(${details.angle}deg);">${details.distance.toFixed(2)}m</div>`,
+          iconSize: [0, 0],
+        });
+
+        return (
+          <Marker
+            key={`edge-${idx}-${coord.lat}-${coord.lng}`}
+            position={[details.midpoint.lat, details.midpoint.lng]}
+            icon={labelIcon}
+            interactive={false}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface SurveyMapProps {
   parcelCoordinates?: Coordinate[];
@@ -186,27 +221,35 @@ export function SurveyMap({
           />
         )}
 
+        {/* ── Parent Parcel Edge Dimensions ─────────────────────────────── */}
+        {parcelCoordinates.length > 1 && (
+          <PolygonEdgeLabels coordinates={parcelCoordinates} />
+        )}
+
         {/* Subdivision Plots */}
         {plots.map((plot, index) => {
           const plotPositions = plot.coordinates.map((c) => [c.lat, c.lng] as [number, number]);
           const color = plotColors[index % plotColors.length];
           return (
-            <Polygon
-              key={plot.id}
-              positions={plotPositions}
-              pathOptions={{ color, weight: 2, fillColor: color, fillOpacity: 0.3 }}
-            >
-              <Popup>
-                <div className="text-sm">
-                  <p className="font-semibold">Plot {plot.plot_number}</p>
-                  <p>Area: {plot.area_sqm.toFixed(2)} m²</p>
-                  {plot.width_m && <p>Width: {plot.width_m.toFixed(2)} m</p>}
-                  {plot.depth_m && <p>Depth: {plot.depth_m.toFixed(2)} m</p>}
-                </div>
-              </Popup>
-            </Polygon>
+            <React.Fragment key={plot.id}>
+              <Polygon
+                positions={plotPositions}
+                pathOptions={{ color, weight: 2, fillColor: color, fillOpacity: 0.3 }}
+              >
+                <Popup>
+                  <div className="text-sm">
+                    <p className="font-semibold">Plot {plot.plot_number}</p>
+                    <p>Area: {plot.area_sqm.toFixed(2)} m²</p>
+                    {plot.width_m && <p>Width: {plot.width_m.toFixed(2)} m</p>}
+                    {plot.depth_m && <p>Depth: {plot.depth_m.toFixed(2)} m</p>}
+                  </div>
+                </Popup>
+              </Polygon>
+              <PolygonEdgeLabels coordinates={plot.coordinates} />
+            </React.Fragment>
           );
         })}
+
 
         {/* Parcel Beacons (numbered) */}
         {beacons.map((beacon) => (

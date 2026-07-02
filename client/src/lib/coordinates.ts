@@ -181,9 +181,25 @@ export function convertCoordinatesFromUTM(
   zone?: number
 ): Coordinate[] {
   return coordinates.map(coord => {
-    // In UTM input, lat field contains Northing, lng field contains Easting
-    const detectedZone = zone || getUTMZone(36.7); // Guess zone based on standard Kenya central if not provided
-    return utmToWGS84(coord.lng, coord.lat, detectedZone);
+    // Determine which field is easting vs northing by magnitude
+    // Easting: 100k-900k; Southern hemisphere northing: ~9.5M-10.5M
+    let easting: number;
+    let northing: number;
+    if (coord.lat >= 9000000) {
+      // lat field holds northing, lng field holds easting
+      northing = coord.lat;
+      easting = coord.lng;
+    } else if (coord.lng >= 9000000) {
+      // lng field holds northing, lat field holds easting
+      easting = coord.lat;
+      northing = coord.lng;
+    } else {
+      // Fallback: lng = easting, lat = northing (legacy assumption)
+      easting = coord.lng;
+      northing = coord.lat;
+    }
+    const detectedZone = zone || getUTMZone(easting < 400000 ? 33.5 : 39);
+    return utmToWGS84(easting, northing, detectedZone);
   });
 }
 

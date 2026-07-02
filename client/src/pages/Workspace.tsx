@@ -699,6 +699,7 @@ export default function Workspace() {
           onDrawingComplete={handleFinishDrawRiver}
           onAccessEdgeToggle={handleAccessEdgeToggle}
           onPlotSelect={() => {}}
+          showLabels={state.showLabels}
         />
 
         {/* Overlays */}
@@ -719,6 +720,8 @@ export default function Workspace() {
           onZoomToFit={handleZoomToFit}
           onShowTour={() => state.setShowTour(true)}
           projectId={projectId || ""}
+          showLabels={state.showLabels}
+          onShowLabelsChange={state.setShowLabels}
         />
 
         {/* Toolbar */}

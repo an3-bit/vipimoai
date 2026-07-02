@@ -399,3 +399,54 @@
   stroke: hsl(var(--commercial));
   stroke-width: 1.5;
 }
+
+/* Custom engineering labels overlay style for Leaflet */
+.leaflet-tooltip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.leaflet-tooltip::before {
+  display: none !important;
+}
+
+.edge-length-label {
+  background: rgba(10, 15, 26, 0.85) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: #f1f5f9 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  padding: 2px 4px !important;
+  border-radius: 3px !important;
+  white-space: nowrap !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5) !important;
+  pointer-events: none !important;
+}
+
+.plot-centroid-label {
+  background: rgba(15, 23, 42, 0.9) !important;
+  border: 1.5px solid rgba(0, 212, 170, 0.5) !important;
+  color: #f1f5f9 !important;
+  font-family: inherit !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  padding: 4px 8px !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6) !important;
+  text-align: center !important;
+  min-width: 80px !important;
+  pointer-events: none !important;
+}
+
+.beacon-corner-label {
+  color: #34d399 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.9) !important;
+  pointer-events: none !important;
+}
+

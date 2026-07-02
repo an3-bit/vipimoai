@@ -1,9 +1,9 @@
-import { useState, useMemo, useCallback } from 'react';
-import { MapContainer, TileLayer, Polygon, Marker, Popup, useMap } from 'react-leaflet';
+import React, { useState, useMemo, useCallback } from 'react';
+import { MapContainer, TileLayer, Polygon, Marker, Popup, useMap, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Coordinate, Plot } from '@/types/survey';
-import { calculatePolygonArea, formatCoordinate } from '@/lib/geometry';
+import { calculatePolygonArea, formatCoordinate, getEdgeLabelDetails, formatArea } from '@/lib/geometry';
 import { toast } from 'sonner';
 
 // Fix for default marker icons in Leaflet
@@ -105,6 +105,41 @@ function DraggableCorner({
   );
 }
 
+// Edge labels rendering helper component
+interface PolygonEdgeLabelsProps {
+  coordinates: Coordinate[];
+}
+
+function PolygonEdgeLabels({ coordinates }: PolygonEdgeLabelsProps) {
+  if (!coordinates || coordinates.length < 2) return null;
+
+  return (
+    <>
+      {coordinates.map((coord, idx) => {
+        const nextCoord = coordinates[(idx + 1) % coordinates.length];
+        const details = getEdgeLabelDetails(coord, nextCoord);
+
+        if (details.distance < 1.0) return null;
+
+        const labelIcon = new L.DivIcon({
+          className: '',
+          html: `<div class="edge-length-label" style="transform: translate(-50%, -50%) rotate(${details.angle}deg);">${details.distance.toFixed(2)}m</div>`,
+          iconSize: [0, 0],
+        });
+
+        return (
+          <Marker
+            key={`edge-${idx}-${coord.lat}-${coord.lng}`}
+            position={[details.midpoint.lat, details.midpoint.lng]}
+            icon={labelIcon}
+            interactive={false}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 export function InteractiveMapEditor({
   parcelCoordinates,
   plots,
@@ -200,33 +235,41 @@ export function InteractiveMapEditor({
           />
         )}
 
+        {/* ── Parent Parcel Edge Dimensions ─────────────────────────────── */}
+        {parcelCoordinates.length > 1 && (
+          <PolygonEdgeLabels coordinates={parcelCoordinates} />
+        )}
+
         {/* Editable Plot Polygons */}
         {plots.map((plot, plotIndex) => {
           const plotPositions = plot.coordinates.map(c => [c.lat, c.lng] as [number, number]);
           const color = plotColors[plotIndex % plotColors.length];
 
           return (
-            <Polygon
-              key={plot.id}
-              positions={plotPositions}
-              pathOptions={{
-                color: color,
-                weight: 2,
-                fillColor: color,
-                fillOpacity: 0.25,
-              }}
-            >
-              <Popup>
-                <div className="text-sm">
-                  <p className="font-semibold">Plot {plot.plot_number}</p>
-                  <p>Area: {plot.area_sqm.toFixed(2)} m²</p>
-                  {plot.width_m && <p>Width: {plot.width_m.toFixed(2)} m</p>}
-                  {plot.depth_m && <p>Depth: {plot.depth_m.toFixed(2)} m</p>}
-                </div>
-              </Popup>
-            </Polygon>
+            <React.Fragment key={plot.id}>
+              <Polygon
+                positions={plotPositions}
+                pathOptions={{
+                  color: color,
+                  weight: 2,
+                  fillColor: color,
+                  fillOpacity: 0.25,
+                }}
+              >
+                <Popup>
+                  <div className="text-sm">
+                    <p className="font-semibold">Plot {plot.plot_number}</p>
+                    <p>Area: {plot.area_sqm.toFixed(2)} m²</p>
+                    {plot.width_m && <p>Width: {plot.width_m.toFixed(2)} m</p>}
+                    {plot.depth_m && <p>Depth: {plot.depth_m.toFixed(2)} m</p>}
+                  </div>
+                </Popup>
+              </Polygon>
+              <PolygonEdgeLabels coordinates={plot.coordinates} />
+            </React.Fragment>
           );
         })}
+
 
         {/* Draggable Corner Markers */}
         {plots.map((plot, plotIndex) =>
